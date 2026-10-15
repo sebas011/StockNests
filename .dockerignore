@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+.tools
+node_modules
+vendor
+public/build
+public/hot
+storage/logs/*
+storage/framework/sessions/*
+storage/framework/views/*
+test-results
+playwright-report

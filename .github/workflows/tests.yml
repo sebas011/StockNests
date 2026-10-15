@@ -1,0 +1,66 @@
+name: StockNest verification
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: stocknest_test
+          POSTGRES_USER: stocknest_test
+          POSTGRES_PASSWORD: isolated-ci-test
+        ports: ["5432:5432"]
+        options: --health-cmd="pg_isready -U stocknest_test" --health-interval=5s --health-timeout=5s --health-retries=10
+    env:
+      APP_ENV: testing
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: stocknest_test
+      DB_USERNAME: stocknest_test
+      DB_PASSWORD: isolated-ci-test
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      MAIL_MAILER: array
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: '8.4'
+          extensions: bcmath, pdo_pgsql, pdo_sqlite, mbstring, gd, zip, intl
+          coverage: none
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: composer install --no-interaction --prefer-dist
+      - run: cp .env.example .env && php artisan key:generate
+      - run: npm ci --no-fund
+      - run: node --test tests/setup/initialize-env.test.mjs
+      - run: npm run build
+      - run: npm run types:check
+      - run: npm test
+      - run: php vendor/bin/pest
+  install:
+    name: Clean Docker installation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+      - run: node scripts/initialize-env.mjs
+      - run: docker compose up -d --build --wait --wait-timeout 300
+      - run: docker compose exec -T app php artisan migrate --seed --force
+      - run: curl --fail --silent http://localhost:8080/login > /dev/null
+      - name: Show startup diagnostics on failure
+        if: failure()
+        run: docker compose logs --tail=80
+      - name: Stop temporary CI services
+        if: always()
+        run: docker compose down --volumes
