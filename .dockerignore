@@ -8,6 +8,9 @@ vendor
 public/build
 public/hot
 storage/logs/*
+storage/app/*
+storage/framework/cache/*
+bootstrap/cache/*.php
 storage/framework/sessions/*
 storage/framework/views/*
 test-results

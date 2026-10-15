@@ -29,11 +29,12 @@ RUN npm run build
 FROM php-base AS runtime
 COPY --from=source /var/www/html .
 RUN composer install --no-dev --no-interaction --prefer-dist --no-progress --optimize-autoloader --no-scripts \
+    && rm -f bootstrap/cache/packages.php bootstrap/cache/services.php \
     && php artisan package:discover --ansi
 COPY --from=assets /app/public/build ./public/build
 COPY docker/apache.conf /etc/apache2/sites-available/000-default.conf
 COPY docker/php.ini /usr/local/etc/php/conf.d/stocknest.ini
-RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs \
+RUN mkdir -p storage/app/private storage/app/public storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs \
     && chown -R www-data:www-data storage bootstrap/cache
 EXPOSE 80
 CMD ["apache2-foreground"]

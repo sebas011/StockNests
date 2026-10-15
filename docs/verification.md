@@ -15,6 +15,8 @@ Windows, PHP 8.4.13, PostgreSQL 18.6, locked Composer/npm dependencies. Authorit
 | Frontend interaction tests | 13 tests passed, including explicit action context, decimal values, validation/retry keys and multi-line form behavior. |
 | PHP formatting | Laravel Pint completed and formatted source. |
 | Installation initializer | 3 Node tests passed: fresh credentials, preservation of existing keys and correct insertion of missing settings. |
+| Downloaded source | A fresh clone from GitHub passed all 3 initializer tests and Composer lockfile validation; generated private settings stayed ignored. |
+| Docker installation | [GitHub Actions](https://github.com/sebas011/StockNests/actions/workflows/tests.yml) runs a clean build, healthy-service startup, reference migrations/seeds and a login-page HTTP check. Consult the run for the downloaded revision. |
 | Browser checks | 2 Chromium tests passed: login/public signup control and a real request through department/fund approval, with unchanged stock CSV before/after. Four independent authenticated browser contexts were used. |
 
 The two concurrency cases release independent PHP processes at the same barrier: competing requests for the last ten units yield one issuance; simultaneous retries of the same command yield one ledger effect. SQLite results are not used to claim these properties.
@@ -25,6 +27,6 @@ The local harness initially hit startup/response-time limits during Windows file
 
 ## Not yet certified
 
-Docker image/container startup, production deployment, restore drill, complete nineteen-report and full-master-prompt acceptance, load testing and organizational UAT. See [implementation status](implementation-status.md) for the remaining required feature scope.
+Production deployment, restore drill, complete nineteen-report and full-master-prompt acceptance, load testing and organizational UAT. The Docker check covers a fresh local installation; it does not certify production operation or a migration of an existing organization's data. See [implementation status](implementation-status.md) for the remaining required feature scope.
 
-No external deployment, push, publication or messages were performed. Demo passwords, application keys, native database files, local logs, browser traces and development tools are excluded from source archives.
+Application source and installation instructions are published at [sebas011/StockNests](https://github.com/sebas011/StockNests). No hosted application or organizational database was deployed. Demo passwords, application keys, native database files, local logs, browser traces and development tools are excluded from the repository and source archives.

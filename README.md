@@ -68,7 +68,7 @@ npm run build
 
 The default backend suite uses isolated SQLite memory databases. It does **not** certify PostgreSQL locks or PostgreSQL-only triggers. Separate-process PostgreSQL concurrency tests are included and skip on SQLite. They require `APP_ENV=testing` and a dedicated database ending in `_test`; they deliberately reset that database. The GitHub workflow configures PostgreSQL 18 and PHP 8.4. Never point tests at production credentials.
 
-Browser checks use `npm run test:e2e` after installing Chromium with `npx playwright install chromium` and starting the application. The multi-role request test requires an explicitly marked disposable demo workspace, `E2E_ALLOW_MUTATIONS=true` and `E2E_TEST_PASSWORD` containing its generated password. Both browser tests passed, including two approval stages and unchanged physical stock. The Docker build remains unverified. See [verification](docs/verification.md) for exact results.
+Browser checks use `npm run test:e2e` after installing Chromium with `npx playwright install chromium` and starting the application. The multi-role request test requires an explicitly marked disposable demo workspace, `E2E_ALLOW_MUTATIONS=true` and `E2E_TEST_PASSWORD` containing its generated password. Both browser tests passed, including two approval stages and unchanged physical stock. [GitHub Actions](https://github.com/sebas011/StockNests/actions/workflows/tests.yml) also checks a fresh Docker build, startup, migrations and login-page response. See [verification](docs/verification.md) for exact results.
 
 ## Physical counting procedure
 
