@@ -49,15 +49,20 @@ $postgresRoot = Join-Path $packageRoot 'runtime/postgresql'
 $archive = [IO.Compression.ZipFile]::OpenRead($postgresZip)
 try {
     foreach ($entry in $archive.Entries) {
-        if ($entry.FullName -notmatch '^pgsql/(bin|lib|share)/' -and $entry.FullName -notmatch '^pgsql/doc/(server_license|commandlinetools_3rd_party_licenses)\.txt$') { continue }
+        $isLicense = $entry.FullName -match '^pgsql/(?:doc/)?(server_license|commandlinetools_3rd_party_licenses)\.txt$'
+        if ($entry.FullName -notmatch '^pgsql/(bin|lib|share)/' -and -not $isLicense) { continue }
         if ($entry.FullName.EndsWith('/')) { continue }
         $relative = $entry.FullName.Substring(6)
+        if ($isLicense) { $relative = 'doc/' + [IO.Path]::GetFileName($relative) }
         $destination = [IO.Path]::GetFullPath((Join-Path $postgresRoot $relative))
         if (-not $destination.StartsWith([IO.Path]::GetFullPath($postgresRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Archive path escaped the PostgreSQL runtime directory' }
         New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent) | Out-Null
         [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destination, $true)
     }
 } finally { $archive.Dispose() }
+foreach ($notice in @('server_license.txt', 'commandlinetools_3rd_party_licenses.txt')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $postgresRoot "doc/$notice"))) { throw "PostgreSQL redistribution notice missing: $notice" }
+}
 
 if (-not $VcRuntimeDirectory) {
     $candidates = @()
