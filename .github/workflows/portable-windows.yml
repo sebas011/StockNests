@@ -1,0 +1,92 @@
+name: Windows portable release
+on:
+  workflow_dispatch:
+  push:
+    tags: ['portable-v*']
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: '8.4'
+          extensions: bcmath, pdo_pgsql, pdo_sqlite, mbstring, gd, zip, intl
+          coverage: none
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Prepare application dependencies
+        run: |
+          node scripts/initialize-env.mjs
+          composer install --no-interaction --prefer-dist
+          if ($LASTEXITCODE -ne 0) { throw 'Composer install failed' }
+          npm ci --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency install failed' }
+          New-Item -ItemType Directory -Force .tools | Out-Null
+          Invoke-WebRequest https://getcomposer.org/download/latest-stable/composer.phar -OutFile .tools/composer.phar
+          $expected = (Invoke-WebRequest https://getcomposer.org/download/latest-stable/composer.phar.sha256).Content.Trim()
+          if ((Get-FileHash .tools/composer.phar).Hash -ne $expected) { throw 'Composer checksum mismatch' }
+      - name: Build portable Windows package
+        run: ./scripts/portable/build.ps1
+      - name: Test launchers without developer tools on PATH
+        run: |
+          $extract = Join-Path $env:RUNNER_TEMP 'StockNest portable check'
+          Expand-Archive dist/StockNest-Windows-x64.zip -DestinationPath $extract
+          $release = Join-Path $extract 'StockNest'
+          "PORTABLE_TEST_ROOT=$release" >> $env:GITHUB_ENV
+          $originalPath = $env:PATH
+          try {
+            $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+            & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/portable/launcher-smoke.ps1 -ReleasePath $release
+            if ($LASTEXITCODE -ne 0) { throw 'Portable launcher smoke failed' }
+          } finally { $env:PATH = $originalPath }
+      - name: Test first-run browser setup and persistent records
+        run: |
+          npx playwright install chromium
+          if ($LASTEXITCODE -ne 0) { throw 'Browser install failed' }
+          $password = 'Aa!4' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
+          Write-Output "::add-mask::$password"
+          $env:E2E_TEST_PASSWORD = $password
+          $env:E2E_PORTABLE = 'true'
+          $launcher = Join-Path $env:PORTABLE_TEST_ROOT 'launcher.ps1'
+          try {
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $launcher -Action Start -NoBrowser -NoPause
+            if ($LASTEXITCODE -ne 0) { throw 'Portable browser startup failed' }
+            $state = Get-Content (Join-Path $env:PORTABLE_TEST_ROOT 'data/state.json') -Raw | ConvertFrom-Json
+            $env:PLAYWRIGHT_BASE_URL = "http://127.0.0.1:$($state.webPort)"
+            $env:E2E_PORTABLE_PHASE = 'first'
+            npx playwright test tests/e2e/portable-onboarding.spec.ts
+            if ($LASTEXITCODE -ne 0) { throw 'First-run browser check failed' }
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $launcher -Action Stop -NoPause
+            if ($LASTEXITCODE -ne 0) { throw 'Portable stop failed' }
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $launcher -Action Start -NoBrowser -NoPause
+            if ($LASTEXITCODE -ne 0) { throw 'Portable restart failed' }
+            $env:E2E_PORTABLE_PHASE = 'restart'
+            npx playwright test tests/e2e/portable-onboarding.spec.ts
+            if ($LASTEXITCODE -ne 0) { throw 'Restart persistence check failed' }
+          } finally {
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $launcher -Action Stop -NoPause
+          }
+      - name: Preserve portable download
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: StockNest-Windows-x64
+          path: |
+            dist/StockNest-Windows-x64.zip
+            dist/StockNest-Windows-x64.zip.sha256
+          if-no-files-found: error
+      - name: Publish downloadable Windows release
+        if: startsWith(github.ref, 'refs/tags/portable-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME dist/StockNest-Windows-x64.zip dist/StockNest-Windows-x64.zip.sha256 --title "StockNest for Windows" --notes-file docs/portable-release-notes.md --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

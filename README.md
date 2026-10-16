@@ -2,7 +2,9 @@
 
 Budget-integrated inventory management for **GAA** and **APPCSE**, built with PHP 8.4+, Laravel 13, React 19, TypeScript, Inertia 3, Tailwind 4, shadcn/ui, PostgreSQL 18, Spatie Permission, Redis, Laravel Excel, Dompdf and Recharts.
 
-**[Install on another device →](INSTALL.md)** Download using **Code → Download ZIP**, or clone `https://github.com/sebas011/StockNests.git`. The installation guide covers setup, administrator creation, updates and moving existing data.
+**Windows PC: [download the ready-to-run ZIP](https://github.com/sebas011/StockNests/releases/latest/download/StockNest-Windows-x64.zip).** Extract the whole ZIP, then double-click **Start StockNest.cmd**. Your browser opens the first-administrator setup. Docker, Node.js and separate runtime installations are unnecessary. See the [Windows guide](docs/operations/portable-windows.md) for starting, stopping, backups and updates.
+
+For the Docker option on Windows, macOS or Linux, use **Code → Download ZIP** or clone `https://github.com/sebas011/StockNests.git`, then follow [installation instructions](INSTALL.md). GitHub's source ZIP and the ready-to-run Windows release ZIP are different downloads.
 
 **Development implementation — not approved for production use.** Screens and core workflows use actual database records. The full requested scope is broader than this first integrated implementation. See [implementation status](docs/implementation-status.md) for outstanding work and verification limits.
 
@@ -12,6 +14,7 @@ Budget-integrated inventory management for **GAA** and **APPCSE**, built with PH
 - [Implemented database and ER diagram](docs/database-implemented.md)
 - [Executed verification](docs/verification.md)
 - [Complete original requirements](docs/MASTER-REQUIREMENTS.md)
+- [Windows PC: download, extract and run](docs/operations/portable-windows.md)
 - [Local setup](docs/operations/local-setup.md)
 - [Deployment, backup and recovery](docs/operations/deployment-and-backup.md)
 
@@ -33,6 +36,8 @@ The proposed architecture/schema documents describe the complete target. They ar
 **Budget availability = authorized allocation − outstanding commitments − actual spending.** Planning approval creates neither stock nor expenditure. Monetary arithmetic uses decimal strings/BCMath; database money uses two decimal places and quantities four. Inventory valuation is explicitly a catalog-cost estimate pending an agreed accounting valuation policy.
 
 ## Docker development setup
+
+For everyday use on one Windows 10/11 x64 PC, the [portable Windows release](docs/operations/portable-windows.md) includes its runtimes and runs offline after download. Each PC has separate local records; copying the application alone does not transfer or synchronize inventory data. The steps below describe the separate Docker option.
 
 Install Docker Desktop with Linux containers and Node 24+. From this directory:
 

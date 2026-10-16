@@ -1,8 +1,27 @@
 # Install StockNest on another device
 
-Download this repository to install the GAA/APPCSE inventory system on Windows, macOS or Linux. Each new installation has its own database. GitHub contains the application source and installation files; it does not contain your users, inventory records, passwords or database backups.
+Choose the ready-to-run Windows download or the Docker method below. Each fresh installation has its own database. GitHub downloads contain no existing users, inventory records, passwords or database backups.
 
 The implemented core has passed backend, frontend and browser checks. See [verification](docs/verification.md) and [remaining features](docs/implementation-status.md) for the current development scope.
+
+## Windows PC: no separate installations
+
+For **Windows 10/11 x64**, download **[StockNest-Windows-x64.zip](https://github.com/sebas011/StockNests/releases/latest/download/StockNest-Windows-x64.zip)** from the release assets. This includes the application and its runtimes; Docker, Node.js, PHP and PostgreSQL do not need to be installed separately. Windows' built-in PowerShell 5.1 and a web browser are used. Administrator rights are unnecessary.
+
+1. Right-click the ZIP and choose **Extract All**. Extract to a short folder you can write to, such as `C:\Users\YourName\StockNest`. Do not run files from inside the ZIP.
+2. Open the extracted folder and double-click **Start StockNest.cmd**. The first start creates a local database and may take a few minutes. Services run in the background; the launcher window can close after startup.
+3. In the browser setup page, create your administrator account. There is no default password. Setup signs you in and opens the dashboard with the seeded GAA/APPCSE references.
+4. When finished, double-click **Stop StockNest.cmd** in the same folder. Your records remain in **data/** for the next start.
+
+The system works offline after download and accepts connections only from that PC. Separate PCs do not synchronize. For a backup or move, stop StockNest first and copy the entire extracted folder, including **data/**. Keep backups private. Never delete or replace **data/** when updating.
+
+Use the [complete Windows guide](docs/operations/portable-windows.md) for backups, upgrades and troubleshooting. The Windows runtime is bundled app-locally; this does not by itself certify every clean Windows machine. Use the release's verification notes for the checks actually performed.
+
+**Code → Download ZIP** downloads source code, which does not include the ready-to-run Windows package. Choose the release asset linked above for the no-install option.
+
+## Docker option: Windows, macOS or Linux
+
+The remaining steps apply to the source-code download and Docker installation.
 
 ## 1. Install the prerequisites
 
@@ -98,13 +117,13 @@ If several employees need the same live records, deploy one central instance and
 
 ## Troubleshooting
 
-| Problem | What to check |
-|---|---|
-| Docker cannot connect | Open Docker Desktop and wait for its engine to start. |
-| `node` is not recognized | Install Node.js, then open a new terminal. |
-| Port already in use | Stop the other local service using 8080, 8025 or 54329, or adjust the host port in `compose.yaml`. |
-| Login page is unavailable | Run `docker compose ps` and `docker compose logs --tail=80 app`. Confirm build and migration commands succeeded. |
-| Database authentication fails | Keep the original `.env` password for an existing Docker database volume. Replacing the file does not reset the database password. |
-| Public registration is unavailable | This is intentional. Create the first administrator with the command above, then create user accounts through administration. |
+| Problem                            | What to check                                                                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Docker cannot connect              | Open Docker Desktop and wait for its engine to start.                                                                              |
+| `node` is not recognized           | Install Node.js, then open a new terminal.                                                                                         |
+| Port already in use                | Stop the other local service using 8080, 8025 or 54329, or adjust the host port in `compose.yaml`.                                 |
+| Login page is unavailable          | Run `docker compose ps` and `docker compose logs --tail=80 app`. Confirm build and migration commands succeeded.                   |
+| Database authentication fails      | Keep the original `.env` password for an existing Docker database volume. Replacing the file does not reset the database password. |
+| Public registration is unavailable | This is intentional. Create the first administrator with the command above, then create user accounts through administration.      |
 
 For host-based development without Docker, see [local setup](docs/operations/local-setup.md).

@@ -55,3 +55,4 @@ yarn-error.log
 /.env.testing
 /test-results
 /playwright-report
+/dist
