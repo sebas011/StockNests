@@ -1,6 +1,6 @@
 import { Link, useForm } from '@inertiajs/react';
 import { LoaderCircle, Plus, ShieldCheck, Trash2 } from 'lucide-react';
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -249,6 +249,7 @@ export function WorkflowForm({
     const form = useForm<FormValues>(defaults);
     const [reviewed, setReviewed] = useState(false);
     const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
+    const opener = useRef<HTMLElement | null>(null);
     const errors = form.errors as Record<string, string | undefined>;
     const lines = (form.data.lines ?? []) as LineValues[];
     // Keep identity outside the payload so immutable field edits do not remount
@@ -306,6 +307,18 @@ export function WorkflowForm({
         >
             <DialogContent
                 className="sn-form-dialog sm:max-w-3xl"
+                onOpenAutoFocus={() => {
+                    opener.current =
+                        document.activeElement instanceof HTMLElement
+                            ? document.activeElement
+                            : null;
+                }}
+                onCloseAutoFocus={(event) => {
+                    if (opener.current?.isConnected) {
+                        event.preventDefault();
+                        opener.current.focus();
+                    }
+                }}
                 onEscapeKeyDown={(event) => {
                     if (form.processing) event.preventDefault();
                 }}

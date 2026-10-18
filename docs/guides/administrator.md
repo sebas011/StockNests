@@ -2,6 +2,10 @@
 
 This guide describes the intended operating workflow. Use only actions actually present in the delivered release; consult the root README for implemented scope and verification. Configuration grants access and authority, so changes must be attributed, reasoned and auditable.
 
+New accounts created by an administrator must replace their initial password before using StockNest. Share that initial password privately; the replacement must be different. Deactivate accounts through administration when access ends. Historical account records are retained.
+
+For custom roles, review `budget.approve`, `fund.approve`, `requests.department-approve` and `fiscal.reopen` in the [implemented permission controls](../permissions.md). Request approval also needs `requests.approve`, and each stage needs a different reviewer within the current approval cycle. Fiscal reopening uses the explicit reopening action with a recorded reason.
+
 ## Before opening live operations
 
 1. Set the organization's display name. StockNest is the application/default name; a legal organization name has not been supplied. Confirm PHP currency and Asia/Manila display timezone.

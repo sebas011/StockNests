@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, cleanup } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import {
+    fireEvent,
+    render,
+    screen,
+    cleanup,
+    waitFor,
+} from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowForm } from '../../resources/js/components/stocknest/workflow-form';
 import type { FormDefinition } from '../../resources/js/lib/stocknest';
@@ -93,6 +101,36 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Controlled workflow submissions', () => {
+    it('returns focus to the button that opened a controlled workflow dialog', async () => {
+        function FormLauncher() {
+            const [open, setOpen] = useState(false);
+            return (
+                <>
+                    <button type="button" onClick={() => setOpen(true)}>
+                        Open issuance
+                    </button>
+                    <WorkflowForm
+                        definition={definition}
+                        open={open}
+                        onOpenChange={setOpen}
+                    />
+                </>
+            );
+        }
+
+        render(<FormLauncher />);
+        const opener = screen.getByRole('button', { name: 'Open issuance' });
+        opener.focus();
+        fireEvent.click(opener);
+        expect(screen.getByRole('dialog')).toBeVisible();
+        expect(
+            screen.getByRole('textbox', { name: 'Recipient' }),
+        ).toHaveFocus();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        await waitFor(() => expect(opener).toHaveFocus());
+    });
+
     it('preserves per-line option searches across immutable edits and a middle deletion without sending client keys', () => {
         const searchable: FormDefinition = {
             ...definition,

@@ -8,6 +8,8 @@ Deploy a versioned application image built from reviewed lockfiles. Run Laravel/
 
 Configure `APP_ENV=production`, `APP_DEBUG=false`, HTTPS `APP_URL`, secure session cookies and approved session lifetime, secrets, least-privilege database credentials, Redis authentication/network restrictions, mail sender/provider, queue retry/timeouts, storage paths, timezone and currency. Exclude `.env`, database backups, access tokens and private attachments from Git and public web roots.
 
+Set `SESSION_SECURE_COOKIE=true` for hosted HTTPS access. If a reverse proxy terminates HTTPS, set `TRUSTED_PROXIES` to its explicit IP addresses or narrowly scoped CIDR ranges, separated by commas; leave it blank for direct/local access. Wildcards and global ranges are rejected. The proxy must preserve the original Host header because forwarded host names are not trusted. Local portable HTTP access keeps secure cookies disabled.
+
 Disable public registration unless explicitly needed and controlled. Provision named users and the first administrator with a unique interactive secret. Enable 2FA according to the organization's policy. Remove or disable demo accounts/data before live use; do not run DemoSeeder in production.
 
 ## Release procedure

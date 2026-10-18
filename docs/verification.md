@@ -1,10 +1,24 @@
-# Verification record — October 16, 2026
+# Verification record
 
-## Environment
+## Audit update — October 18–19, 2026
+
+The audit patch was verified on a dedicated PostgreSQL 18.6 database with debug disabled. The complete backend run passed **129 tests and 782 assertions**, including independent-process issuance/idempotency races, approval-cycle separation, cross-location reservations, account lifecycle controls, indirect record policies, report limits and exact monetary aggregation. The test database contains disposable fixtures and is separate from installed application data.
+
+Independent review then found that the HTTP route excluded the hyphen in `fiscal-year.reopen`. The route now derives an escaped constraint from the shared operation allowlist. The expanded workspace suite passed **10 tests and 81 assertions** on isolated SQLite, including missing-reason rejection, denied reopening permission and an audited successful reopening through the actual form URL. This focused run supplements the earlier full PostgreSQL run; SQLite is not used to claim concurrency behavior.
+
+PHPStan passed the full configured level 7 scope with **zero errors**, without a baseline or ignored findings. Laravel Pint, TypeScript, strict frontend formatting/lint, all **25 frontend tests**, and all **4 environment initializer tests** passed. The frontend suite includes returning focus to the opening button after closing a controlled workflow dialog. Composer validation passed; Composer and npm audits reported zero known vulnerabilities in the resolved dependencies at verification time.
+
+Charts now load separately on the overview. The StockNest page chunk decreased from about 394 KB to about 54 KB; the shared application chunk still emits the existing 500 KB build warning. These figures describe individual chunks, not the total download for the whole application.
+
+CI now enforces formatting, static analysis and dependency audits. Consult [GitHub verification runs](https://github.com/sebas011/StockNests/actions/workflows/tests.yml) for the exact downloaded revision, including clean Docker installation, unprivileged worker identities and shared-storage write checks. The [portable release workflow](https://github.com/sebas011/StockNests/actions/workflows/portable-windows.yml) rebuilds and tests the actual downloadable ZIP.
+
+## October 16 baseline
+
+### Environment
 
 Windows, PHP 8.4.13 for backend checks, bundled PHP 8.4.26 for portable checks, PostgreSQL 18.6, locked Composer/npm dependencies. Authoritative PostgreSQL tests use a separate `stocknest_test` database. Demonstration browser fixtures use a separate local `stocknest` database with explicit demo labeling. Portable checks use a separate disposable installation with no demonstration data.
 
-## Executed checks
+### Executed checks
 
 | Check                                                | Evidence                                                                                                                                                                                                                                                                                                                                                         |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -28,7 +42,7 @@ The first PostgreSQL setup exposed a stale permission cache when DatabaseSeeder 
 
 The local harness initially hit startup/response-time limits during Windows file copying. Final tests ran after that copy, with explicit worker-readiness waits. Browser execution also exposed dropped non-visible workflow values; forms now send only explicitly declared record/decision context, with unrelated model defaults excluded. Regression tests cover this contract.
 
-## Not yet certified
+### Not yet certified
 
 Production deployment, restore drill, complete nineteen-report and full-master-prompt acceptance, load testing, organizational UAT and a separate clean Windows machine without developer software. The portable check removes developer tools from PATH and confirms app-local runtime loading; it does not establish certification for every Windows configuration. The Docker check covers a fresh local installation; it does not certify production operation or a migration of an existing organization's data. See [implementation status](implementation-status.md) for the remaining required feature scope.
 

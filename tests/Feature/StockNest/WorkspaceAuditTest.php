@@ -2,6 +2,7 @@
 
 use App\Models\AnnualProjection;
 use App\Models\ApprovalDecision;
+use App\Models\AuditLog;
 use App\Models\BudgetAdjustment;
 use App\Models\BudgetAllocation;
 use App\Models\Department;
@@ -20,6 +21,7 @@ use App\Models\Warehouse;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Database\Seeders\StockNestSeeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 beforeEach(function () {
     $this->seed([RolesAndPermissionsSeeder::class, StockNestSeeder::class]);
@@ -145,6 +147,42 @@ test('closed fiscal years expose a controlled reopen form for explicitly permitt
     expect($row['actions'][0]['form']['action'])->toBe('/app/actions/fiscal-year.reopen')
         ->and($row['actions'][0]['form']['context']['id'])->toBe($this->workspaceYear->id)
         ->and($row['actions'][0]['form']['fields'][0]['required'])->toBeTrue();
+});
+
+test('fiscal-year reopen form submits through HTTP with a required reason and records its audit', function () {
+    $this->workspaceYear->update(['status' => 'closed']);
+    $this->workspaceActor->syncRoles([]);
+    $this->workspaceActor->givePermissionTo('fiscal.reopen');
+    $props = workspacePage($this, '/app/administration');
+    $row = collect($props['page']['rows'])->firstWhere('id', 'fiscal-year-'.$this->workspaceYear->id);
+    $form = $row['actions'][0]['form'];
+
+    $this->actingAs($this->workspaceActor)->postJson($form['action'], $form['context'] + ['idempotency_key' => (string) Str::uuid()])
+        ->assertUnprocessable()->assertJsonValidationErrors('reason');
+    expect($this->workspaceYear->fresh()->status)->toBe('closed')
+        ->and(AuditLog::where('action', 'fiscal-year.reopened')->count())->toBe(0);
+
+    $this->from('/app/administration')->post($form['action'], $form['context'] + ['idempotency_key' => (string) Str::uuid(), 'reason' => 'Authorized year-end correction'])
+        ->assertRedirect('/app/administration')->assertSessionHasNoErrors();
+    $audit = AuditLog::where('action', 'fiscal-year.reopened')->sole();
+    expect($this->workspaceYear->fresh()->status)->toBe('open')
+        ->and($audit->subject_type)->toBe(FiscalYear::class)
+        ->and($audit->subject_id)->toBe($this->workspaceYear->id)
+        ->and($audit->user_id)->toBe($this->workspaceActor->id)
+        ->and($audit->reason)->toBe('Authorized year-end correction')
+        ->and($audit->before_values['status'])->toBe('closed')
+        ->and($audit->after_values['status'])->toBe('open');
+});
+
+test('fiscal-year reopen HTTP action rejects users without its explicit permission', function () {
+    $this->workspaceYear->update(['status' => 'closed']);
+    $this->workspaceActor->syncRoles([]);
+    $this->workspaceActor->givePermissionTo('master-data.manage');
+
+    $this->actingAs($this->workspaceActor)->postJson('/app/actions/fiscal-year.reopen', ['id' => $this->workspaceYear->id, 'idempotency_key' => (string) Str::uuid(), 'reason' => 'Attempted year-end correction'])
+        ->assertForbidden();
+    expect($this->workspaceYear->fresh()->status)->toBe('closed')
+        ->and(AuditLog::where('action', 'fiscal-year.reopened')->count())->toBe(0);
 });
 
 test('approval pagination covers all workflow types without dropping later records', function () {
