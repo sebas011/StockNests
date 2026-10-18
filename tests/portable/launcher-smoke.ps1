@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param([string] $ReleasePath)
 
-# With no argument this checks the launcher without starting any services.
+# With no argument this checks the launcher without starting application services.
 # Pass a freshly extracted, disposable portable release for the lifecycle test.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -55,6 +55,57 @@ Assert-True (-not [string]::Equals($nearbyData, $expectedData, [StringComparison
 Assert-True ($null -eq (Get-PostgresDataDirectory '"C:/StockNest -D fake/runtime/postgres.exe" -h 127.0.0.1')) 'A -D substring inside a quoted folder was accepted.'
 Assert-True ($null -eq (Get-PostgresDataDirectory 'postgres.exe -D "C:/first" -D "C:/second"')) 'An ambiguous database directory was accepted.'
 Assert-True ($null -eq (Get-PostgresDataDirectory 'postgres.exe -D data/pgdata')) 'A relative database directory was accepted.'
+
+# Model a stale CIM row after queue:restart without relying on the race timing.
+# The OS liveness check uses real exited/live PIDs, while the CIM row is fixed.
+$originalIdentity = (Get-Item Function:\Get-ProcessIdentity).ScriptBlock
+$exitedProcess = $null
+$appRoot = Join-Path $projectRoot '.tools\identity fixture\app'
+$phpExe = Join-Path $projectRoot '.tools\identity fixture\runtime\php\php.exe'
+try {
+    function Get-ProcessIdentity([int] $ProcessId) { return $script:identityFixture }
+    $exitShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $exitedProcess = Start-Process -FilePath $exitShell -ArgumentList '-NoLogo -NoProfile -NonInteractive -Command "exit 0"' -WindowStyle Hidden -PassThru
+    Assert-True ($exitedProcess.WaitForExit(10000)) 'The process exit fixture did not finish.'
+    $identityFixture = [pscustomobject] @{ ExecutablePath = ''; CommandLine = ''; CreationDate = [DateTime]::UtcNow }
+    $record = [pscustomobject] @{ pid = $exitedProcess.Id; commandLine = ''; createdAt = '' }
+    Assert-True (-not (Test-OwnedPhpProcess $record 'queue')) 'An exited worker with a stale blank CIM identity prevented shutdown.'
+
+    $record.pid = $PID
+    $refused = $false
+    try { Test-OwnedPhpProcess $record 'queue' | Out-Null } catch {
+        $refused = $_.Exception.Message -like 'Cannot verify the previous queue process.*'
+    }
+    Assert-True $refused 'A live process with an unverifiable identity was accepted.'
+
+    $identityFixture.ExecutablePath = $phpExe
+    $identityFixture.CommandLine = '"' + $phpExe + '" "' + (Join-Path $appRoot 'artisan') + '" queue:work'
+    $record.commandLine = $identityFixture.CommandLine
+    $record.createdAt = $identityFixture.CreationDate.ToUniversalTime().ToString('o')
+    Assert-True (Test-OwnedPhpProcess $record 'queue') 'An exact recorded PHP identity was rejected.'
+    $identityFixture.ExecutablePath = $phpExe + '.other'
+    Assert-True (-not (Test-OwnedPhpProcess $record 'queue')) 'An executable path mismatch was accepted.'
+    $identityFixture.ExecutablePath = $phpExe
+    $record.commandLine += ' --different'
+    Assert-True (-not (Test-OwnedPhpProcess $record 'queue')) 'A command line mismatch was accepted.'
+    $record.commandLine = $identityFixture.CommandLine
+    $record.createdAt = $identityFixture.CreationDate.AddSeconds(-1).ToUniversalTime().ToString('o')
+    Assert-True (-not (Test-OwnedPhpProcess $record 'queue')) 'A reused PID with a different creation time was accepted.'
+    $record.createdAt = $identityFixture.CreationDate.ToUniversalTime().ToString('o')
+    $identityFixture.CommandLine = '"' + $phpExe + '" -r "sleep(30);"'
+    $record.commandLine = $identityFixture.CommandLine
+    Assert-True (-not (Test-OwnedPhpProcess $record 'queue')) 'An unrelated PHP command without the application marker was accepted.'
+    function Get-ProcessIdentity([int] $ProcessId) { throw 'Process inspection fixture denied access.' }
+    $inspectionFailed = $false
+    try { Test-OwnedPhpProcess $record 'queue' | Out-Null } catch {
+        $inspectionFailed = $_.Exception.Message -eq 'Process inspection fixture denied access.'
+    }
+    Assert-True $inspectionFailed 'An inspection failure was treated as an exited process.'
+} finally {
+    Set-Item Function:\Get-ProcessIdentity $originalIdentity
+    if ($null -ne $exitedProcess) { $exitedProcess.Dispose() }
+}
+
 $available = Get-AvailablePort 8765
 Assert-True (Test-PortAvailable $available) 'Selected port is not available on loopback.'
 $listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $available)
@@ -121,7 +172,7 @@ try {
     if (-not $resolvedTemporary.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Temporary cleanup path is outside the test workspace.' }
     Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
 }
-Write-Host 'Launcher checks passed: syntax, Windows paths, occupied ports, private credential ACLs and persistent settings.'
+Write-Host 'Launcher checks passed: syntax, Windows paths, exited-process races, live identity refusals, occupied ports, private credential ACLs and persistent settings.'
 
 if ([string]::IsNullOrWhiteSpace($ReleasePath)) { exit 0 }
 $release = [IO.Path]::GetFullPath($ReleasePath)

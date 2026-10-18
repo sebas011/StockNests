@@ -195,11 +195,28 @@ function Get-ProcessIdentity([int] $ProcessId) {
     return Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
 }
 
+function Test-ProcessHasExited([int] $ProcessId) {
+    try {
+        $inspected = [Diagnostics.Process]::GetProcessById($ProcessId)
+    } catch [ArgumentException] {
+        # GetProcessById uses ArgumentException when the PID no longer exists.
+        return $true
+    }
+    try {
+        return $inspected.HasExited
+    } finally {
+        $inspected.Dispose()
+    }
+}
+
 function Test-OwnedPhpProcess([object] $Record, [string] $Kind) {
     if ($null -eq $Record) { return $false }
     $process = Get-ProcessIdentity ([int] $Record.pid)
     if ($null -eq $process) { return $false }
     if ([string]::IsNullOrWhiteSpace([string] $process.ExecutablePath)) {
+        # CIM can retain a process row while a gracefully stopped worker exits.
+        # Only a confirmed exit may bypass the otherwise fail-closed check.
+        if (Test-ProcessHasExited ([int] $Record.pid)) { return $false }
         throw "Cannot verify the previous $Kind process. Close StockNest and try again."
     }
     if (-not [string]::Equals([string] $process.ExecutablePath, $script:phpExe, [StringComparison]::OrdinalIgnoreCase)) { return $false }
