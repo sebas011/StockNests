@@ -3,6 +3,9 @@ includes:
     - vendor/nesbot/carbon/extension.neon
 
 parameters:
+    stubFiles:
+        - stubs/Illuminate/Database/Seeder.stub
+
     paths:
         - app/
         - bootstrap/app.php

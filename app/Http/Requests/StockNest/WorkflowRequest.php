@@ -7,15 +7,18 @@ use Illuminate\Validation\Rule;
 
 final class WorkflowRequest extends FormRequest
 {
-    public const OPERATIONS = ['master.save', 'allocation.create', 'allocation.decide', 'projection.save', 'projection.submit', 'projection.decide', 'request.save', 'request.submit', 'request.decide', 'request.cancel', 'purchase.create', 'purchase.approve', 'purchase.cancel', 'purchase.spend', 'receipt.create', 'issuance.create', 'issuance.return', 'reservation.create', 'transfer.create', 'count.create', 'count.encode', 'count.submit', 'count.decide', 'count.reconcile'];
+    public const OPERATIONS = ['master.save', 'fiscal-year.reopen', 'allocation.create', 'allocation.decide', 'projection.save', 'projection.submit', 'projection.decide', 'request.save', 'request.submit', 'request.decide', 'request.cancel', 'purchase.create', 'purchase.approve', 'purchase.cancel', 'purchase.spend', 'receipt.create', 'issuance.create', 'issuance.return', 'reservation.create', 'transfer.create', 'count.create', 'count.encode', 'count.submit', 'count.decide', 'count.reconcile'];
 
     public function authorize(): bool
     {
         $operation = (string) $this->route('operation');
         $permission = match ($operation) {
             'master.save' => 'master-data.manage',
+            'fiscal-year.reopen' => 'fiscal.reopen',
             'allocation.create', 'projection.save', 'projection.submit', 'purchase.spend' => 'budgets.manage',
-            'allocation.decide', 'projection.decide', 'request.decide', 'purchase.approve' => 'requests.approve',
+            'allocation.decide', 'projection.decide' => 'budget.approve',
+            'purchase.approve' => 'fund.approve',
+            'request.decide' => 'requests.approve',
             'request.save', 'request.submit', 'request.cancel' => 'requests.create',
             'purchase.create', 'purchase.cancel' => 'procurement.manage',
             'count.decide' => 'counts.approve',
@@ -25,6 +28,7 @@ final class WorkflowRequest extends FormRequest
         return in_array($operation, self::OPERATIONS, true) && $this->user()?->is_active && $this->user()->hasPermissionTo($permission);
     }
 
+    /** @return array<string, array<int, mixed>> */
     public function rules(): array
     {
         $operation = (string) $this->route('operation');
@@ -32,6 +36,9 @@ final class WorkflowRequest extends FormRequest
         $id = ['required', 'integer', 'min:1'];
         $quantity = ['required', 'regex:/^\d{1,14}(\.\d{1,4})?$/', 'numeric', 'gt:0'];
         $money = ['required', 'regex:/^\d{1,14}(\.\d{1,2})?$/'];
+        if ($operation === 'fiscal-year.reopen') {
+            return $rules + ['id' => $id, 'reason' => ['required', 'string', 'max:3000']];
+        }
         if ($operation === 'master.save') {
             $rules += ['kind' => ['required', Rule::in(['fund', 'department', 'fiscal-year', 'category', 'unit', 'warehouse', 'supplier', 'item'])], 'id' => ['nullable', 'integer', 'min:1'], 'is_active' => ['sometimes', 'boolean']];
             $kind = $this->input('kind');
@@ -77,7 +84,7 @@ final class WorkflowRequest extends FormRequest
             return $rules + ['warehouse_id' => ['required', 'exists:warehouses,id'], 'counter_id' => ['required', 'exists:users,id'], 'count_month' => ['required', 'date_format:Y-m-d']];
         }
         if ($operation === 'transfer.create') {
-            return $rules + ['warehouse_id' => ['required', 'exists:warehouses,id'], 'destination_warehouse_id' => ['required', 'exists:warehouses,id', 'different:warehouse_id'], 'item_id' => ['required', 'exists:items,id'], 'quantity' => $quantity, 'reason' => ['required', 'string', 'max:3000']];
+            return $rules + ['fiscal_year_id' => ['nullable', 'exists:fiscal_years,id'], 'effective_on' => ['nullable', 'date_format:Y-m-d'], 'warehouse_id' => ['required', 'exists:warehouses,id'], 'destination_warehouse_id' => ['required', 'exists:warehouses,id', 'different:warehouse_id'], 'item_id' => ['required', 'exists:items,id'], 'quantity' => $quantity, 'reason' => ['required', 'string', 'max:3000']];
         }
         $rules += ['id' => $id];
         if (str_ends_with($operation, '.decide')) {

@@ -93,6 +93,243 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Controlled workflow submissions', () => {
+    it('preserves per-line option searches across immutable edits and a middle deletion without sending client keys', () => {
+        const searchable: FormDefinition = {
+            ...definition,
+            lineFields: [
+                {
+                    name: 'item_id',
+                    label: 'Item',
+                    type: 'select',
+                    options: Array.from({ length: 10 }, (_, index) => ({
+                        value: String(index + 1),
+                        label: `Catalog item ${index + 1}`,
+                    })),
+                },
+                { name: 'quantity', label: 'Quantity', type: 'number' },
+            ],
+            defaults: {
+                recipient: 'Maria Santos',
+                lines: [
+                    { item_id: '1', quantity: '1' },
+                    { item_id: '2', quantity: '2' },
+                    { item_id: '3', quantity: '3' },
+                ],
+            },
+        };
+        render(
+            <WorkflowForm
+                definition={searchable}
+                open
+                onOpenChange={transport.close}
+            />,
+        );
+        const searches = screen.getAllByRole('searchbox', {
+            name: 'Search item options',
+        }) as HTMLInputElement[];
+        fireEvent.change(searches[0], { target: { value: 'first search' } });
+        fireEvent.change(searches[1], { target: { value: 'middle search' } });
+        fireEvent.change(searches[2], { target: { value: 'last search' } });
+        fireEvent.change(screen.getAllByLabelText('Quantity')[2], {
+            target: { value: '3.125' },
+        });
+        expect(
+            (screen.getAllByRole('searchbox')[2] as HTMLInputElement).value,
+        ).toBe('last search');
+        fireEvent.click(screen.getByRole('button', { name: 'Remove item 2' }));
+        const remaining = screen.getAllByRole(
+            'searchbox',
+        ) as HTMLInputElement[];
+        expect(remaining.map((search) => search.value)).toEqual([
+            'first search',
+            'last search',
+        ]);
+        fireEvent.click(
+            screen.getByRole('button', { name: 'Confirm issuance' }),
+        );
+        expect(transport.submissions[0].data.lines).toEqual([
+            { item_id: '1', quantity: '1' },
+            { item_id: '3', quantity: '3.125' },
+        ]);
+    });
+
+    it('submits permission selections as an array of known option values', () => {
+        const roles: FormDefinition = {
+            title: 'Edit role',
+            action: '/app/roles',
+            fields: [
+                {
+                    name: 'permissions',
+                    label: 'Permissions',
+                    type: 'multiselect',
+                    options: [
+                        {
+                            value: 'requests.approve',
+                            label: 'Approve requests',
+                        },
+                        { value: 'fund.approve', label: 'Approve funding' },
+                    ],
+                },
+            ],
+            defaults: { permissions: ['requests.approve'] },
+        };
+        render(
+            <WorkflowForm
+                definition={roles}
+                open
+                onOpenChange={transport.close}
+            />,
+        );
+        expect(
+            (
+                screen.getByRole('checkbox', {
+                    name: 'Approve requests',
+                }) as HTMLInputElement
+            ).checked,
+        ).toBe(true);
+        fireEvent.click(
+            screen.getByRole('checkbox', { name: 'Approve funding' }),
+        );
+        fireEvent.click(
+            screen.getByRole('checkbox', { name: 'Approve requests' }),
+        );
+        fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+        expect(transport.submissions[0].data.permissions).toEqual([
+            'fund.approve',
+        ]);
+    });
+
+    it('keeps approval lines fixed and their identifiers hidden while allowing per-line approved quantities', () => {
+        const approval: FormDefinition = {
+            title: 'Approve request',
+            action: '/app/actions/request.decide',
+            fields: [],
+            fixedLines: true,
+            lineFields: [
+                { name: 'line_id', label: 'Line ID', type: 'hidden' },
+                {
+                    name: 'item',
+                    label: 'Requested item',
+                    type: 'text',
+                    readOnly: true,
+                },
+                {
+                    name: 'quantity',
+                    label: 'Requested quantity',
+                    type: 'number',
+                    readOnly: true,
+                },
+                {
+                    name: 'approved_quantity',
+                    label: 'Approved quantity',
+                    type: 'number',
+                    min: '0',
+                    step: '0.0001',
+                },
+            ],
+            defaults: {
+                lines: [
+                    {
+                        line_id: 12,
+                        item: 'Bond paper',
+                        quantity: '10',
+                        approved_quantity: '10',
+                    },
+                    {
+                        line_id: 24,
+                        item: 'Ink',
+                        quantity: '4',
+                        approved_quantity: '4',
+                    },
+                ],
+            },
+        };
+        render(
+            <WorkflowForm
+                definition={approval}
+                open
+                onOpenChange={transport.close}
+            />,
+        );
+        expect(screen.queryByRole('button', { name: 'Add item' })).toBeNull();
+        expect(
+            screen.queryByRole('button', { name: /Remove item/ }),
+        ).toBeNull();
+        expect(screen.queryByLabelText('Line ID')).toBeNull();
+        expect(
+            (screen.getAllByLabelText('Requested item')[0] as HTMLInputElement)
+                .readOnly,
+        ).toBe(true);
+        expect(
+            (
+                screen.getAllByLabelText(
+                    'Requested quantity',
+                )[0] as HTMLInputElement
+            ).readOnly,
+        ).toBe(true);
+        fireEvent.change(screen.getAllByLabelText('Approved quantity')[1], {
+            target: { value: '2.5001' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+        expect(transport.submissions[0].data.lines).toEqual([
+            {
+                line_id: 12,
+                item: 'Bond paper',
+                quantity: '10',
+                approved_quantity: '10',
+            },
+            {
+                line_id: 24,
+                item: 'Ink',
+                quantity: '4',
+                approved_quantity: '2.5001',
+            },
+        ]);
+    });
+
+    it('respects field-specific decimal and signed adjustment constraints', () => {
+        const amounts: FormDefinition = {
+            title: 'Adjust allocation',
+            action: '/app/actions/allocation.create',
+            fields: [
+                {
+                    name: 'amount',
+                    label: 'Amount to add / reduce',
+                    type: 'number',
+                    min: '-99999999999999.99',
+                    max: '99999999999999.99',
+                    step: '0.01',
+                },
+                {
+                    name: 'quantity',
+                    label: 'Quantity',
+                    type: 'number',
+                    min: '0',
+                    step: '0.0001',
+                },
+            ],
+        };
+        render(
+            <WorkflowForm
+                definition={amounts}
+                open
+                onOpenChange={transport.close}
+            />,
+        );
+        const amount = screen.getByLabelText(
+            'Amount to add / reduce',
+        ) as HTMLInputElement;
+        const quantity = screen.getByLabelText('Quantity') as HTMLInputElement;
+        expect(amount.inputMode).toBe('decimal');
+        expect(amount.min).toBe('-99999999999999.99');
+        expect(amount.step).toBe('0.01');
+        expect(quantity.min).toBe('0');
+        expect(quantity.step).toBe('0.0001');
+        fireEvent.change(amount, { target: { value: '-12.25' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+        expect(transport.submissions[0].data.amount).toBe('-12.25');
+    });
+
     it('adds independent lines, permits removing only the intended line, and submits all remaining lines', () => {
         render(
             <WorkflowForm

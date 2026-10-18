@@ -33,6 +33,7 @@ use App\Models\User;
 use App\Models\Warehouse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
@@ -41,11 +42,18 @@ use Illuminate\Validation\ValidationException;
 /** All financial and physical changes are performed through this transaction boundary. */
 final class WorkflowService
 {
-    public const PERMISSIONS = ['dashboard.view', 'master-data.manage', 'budgets.manage', 'requests.create', 'requests.approve', 'procurement.manage', 'inventory.manage', 'counts.approve', 'reports.view', 'audit.view', 'users.manage'];
+    public const PERMISSIONS = ['dashboard.view', 'master-data.manage', 'budgets.manage', 'budget.approve', 'fund.approve', 'requests.department-approve', 'fiscal.reopen', 'requests.create', 'requests.approve', 'procurement.manage', 'inventory.manage', 'counts.approve', 'reports.view', 'audit.view', 'users.manage'];
 
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{id: int|string|null, type: class-string<Model>, reference: string}
+     */
     public function execute(User $user, string $operation, array $data, string $key): array
     {
         unset($data['idempotency_key']);
+        /** @param array<array-key, mixed> $value
+         * @return array<array-key, mixed>
+         */
         $canonical = function (array $value) use (&$canonical): array {
             foreach ($value as &$entry) {
                 if (is_array($entry)) {
@@ -56,7 +64,7 @@ final class WorkflowService
                 ksort($value);
             }
 
-return $value;
+            return $value;
         };
         $hash = hash('sha256', json_encode($canonical($data), JSON_THROW_ON_ERROR));
 
@@ -65,12 +73,14 @@ return $value;
             $command = IdempotentCommand::where('key', $key)->lockForUpdate()->firstOrFail();
             $this->ensure((int) $command->user_id === $user->id && $command->operation === $operation && hash_equals($command->request_hash, $hash), 'This transaction key was already used for a different operation.');
             if ($command->result !== null) {
-                $this->authorizeReplay($user, $operation, $command->result);
+                $result = $this->replayResult($command->result);
+                $this->authorizeReplay($user, $operation, $result);
 
-                return $command->result;
+                return $result;
             }
             $record = match ($operation) {
                 'master.save' => $this->master($user, $data),
+                'fiscal-year.reopen' => $this->reopenYear($user, $data),
                 'allocation.create' => $this->allocation($user, $data),
                 'allocation.decide' => $this->allocationDecision($user, $data),
                 'projection.save' => $this->projection($user, $data),
@@ -96,31 +106,66 @@ return $value;
                 'count.reconcile' => $this->reconcile($user, $data),
                 default => throw ValidationException::withMessages(['operation' => 'Unknown operation.']),
             };
-            $result = ['id' => $record->getKey(), 'type' => $record::class, 'reference' => $record->reference ?? $record->name ?? (string) $record->id];
+            $result = ['id' => $record->getKey(), 'type' => $record::class, 'reference' => $record->reference ?? $record->name ?? (string) $record->getKey()];
             $command->update(['result' => $result]);
 
             return $result;
         }, 5);
     }
 
+    /**
+     * @param  array<string, mixed>  $result
+     * @return array{id: int|string|null, type: class-string<Model>, reference: string}
+     */
+    private function replayResult(array $result): array
+    {
+        $this->ensure(array_key_exists('id', $result) && (is_int($result['id']) || is_string($result['id']) || $result['id'] === null)
+            && isset($result['type']) && is_string($result['type']) && is_subclass_of($result['type'], Model::class)
+            && isset($result['reference']) && is_string($result['reference']), 'The saved transaction result is invalid.');
+
+        return ['id' => $result['id'], 'type' => $result['type'], 'reference' => $result['reference']];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<array-key, array<array-key, mixed>>
+     */
+    private function commandLines(array $data): array
+    {
+        $lines = $data['lines'] ?? [];
+        $this->ensure(is_array($lines), 'Workflow lines must be an array.', 'lines');
+        $result = [];
+        foreach ($lines as $key => $line) {
+            $this->ensure(is_array($line), 'Each workflow line must be an array.', 'lines');
+            $result[$key] = $line;
+        }
+
+        return $result;
+    }
+
+    /** @param array{id: int|string|null, type: class-string<Model>, reference: string} $result */
     private function authorizeReplay(User $user, string $operation, array $result): void
     {
         $permission = match ($operation) {
             'master.save' => 'master-data.manage',
+            'fiscal-year.reopen' => 'fiscal.reopen',
             'allocation.create', 'projection.save', 'projection.submit', 'purchase.spend' => 'budgets.manage',
-            'allocation.decide', 'projection.decide', 'request.decide', 'purchase.approve' => 'requests.approve',
+            'allocation.decide', 'projection.decide' => 'budget.approve',
+            'purchase.approve' => 'fund.approve',
+            'request.decide' => 'requests.approve',
             'request.save', 'request.submit', 'request.cancel' => 'requests.create',
             'purchase.create', 'purchase.cancel' => 'procurement.manage', 'count.decide' => 'counts.approve',
             default => 'inventory.manage',
         };
         $record = $result['type']::findOrFail($result['id']);
         $fund = match (true) {
-            $record instanceof FundingSource => $record->id, $record instanceof BudgetAdjustment => $record->allocation->funding_source_id, $record instanceof StockReservation => $record->balance->funding_source_id, default => $record->funding_source_id
+            $record instanceof FundingSource => $record->getKey(), $record instanceof BudgetAdjustment => $record->allocation->funding_source_id, $record instanceof StockReservation => $record->balance->funding_source_id, default => $record->getAttribute('funding_source_id')
         };
-        Access::assert($user, $permission, $fund ? (int) $fund : null, $record->department_id ? (int) $record->department_id : null);
+        Access::assert($user, $permission, $fund ? (int) $fund : null, $record->getAttribute('department_id') ? (int) $record->getAttribute('department_id') : null);
         Gate::forUser($user)->authorize('view', $record);
     }
 
+    /** @phpstan-assert true $condition */
     private function ensure(bool $condition, string $message, string $field = 'workflow'): void
     {
         if (! $condition) {
@@ -136,21 +181,28 @@ return $value;
         return $year;
     }
 
+    /**
+     * @template TModel of Model
+     *
+     * @param  class-string<TModel>  $class
+     * @return TModel
+     */
     private function record(User $user, string $class, int $id, string $permission, bool $approve = false): Model
     {
-        $record = $class::whereKey($id)->lockForUpdate()->firstOrFail();
-        Access::assert($user, $permission, $record->funding_source_id ? (int) $record->funding_source_id : null, $record->department_id ? (int) $record->department_id : null);
+        $record = (new $class)->newQuery()->whereKey($id)->lockForUpdate()->firstOrFail();
+        Access::assert($user, $permission, $record->getAttribute('funding_source_id') ? (int) $record->getAttribute('funding_source_id') : null, $record->getAttribute('department_id') ? (int) $record->getAttribute('department_id') : null);
         Gate::forUser($user)->authorize($approve ? 'approve' : 'view', $record);
-        if ($record->fiscal_year_id) {
-            $this->activeYear((int) $record->fiscal_year_id);
+        if ($record->getAttribute('fiscal_year_id')) {
+            $this->activeYear((int) $record->getAttribute('fiscal_year_id'));
         }
 
         return $record;
     }
 
+    /** @param array<string, mixed> $before */
     private function audit(User $user, Model $record, string $action, array $before = [], ?string $reason = null, ?int $fund = null): void
     {
-        $fund ??= $record->funding_source_id ? (int) $record->funding_source_id : null;
+        $fund ??= $record->getAttribute('funding_source_id') ? (int) $record->getAttribute('funding_source_id') : null;
         $fresh = $record->fresh();
         if (method_exists($fresh, 'lines')) {
             $fresh->load('lines');
@@ -161,13 +213,14 @@ return $value;
         }
     }
 
-    private function decision(User $user, Model $record, string $decision, ?string $comment, int $stage = 1): void
+    private function decision(User $user, Model $record, string $decision, ?string $comment, int $stage = 1, ?int $fund = null): void
     {
         $this->ensure(in_array($decision, ['approved', 'rejected', 'returned'], true), 'Invalid decision.');
         $this->ensure($decision === 'approved' || filled($comment), 'A comment is required for rejection or revision.', 'comment');
-        ApprovalDecision::create(['user_id' => $user->id, 'funding_source_id' => $record->funding_source_id, 'subject_type' => $record::class, 'subject_id' => $record->id, 'stage' => $stage, 'decision' => $decision, 'comment' => $comment, 'created_at' => now()]);
+        ApprovalDecision::create(['user_id' => $user->id, 'funding_source_id' => $fund ?? $record->getAttribute('funding_source_id'), 'subject_type' => $record::class, 'subject_id' => $record->getKey(), 'stage' => $stage, 'decision' => $decision, 'comment' => $comment, 'created_at' => now()]);
     }
 
+    /** @param array<string, mixed> $data */
     private function master(User $user, array $data): Model
     {
         Access::assert($user, 'master-data.manage');
@@ -182,10 +235,13 @@ return $value;
         };
         $attributes = array_intersect_key($data, array_flip($allowed));
         $record = isset($data['id']) ? $class::whereKey($data['id'])->lockForUpdate()->firstOrFail() : new $class;
-        if ($record instanceof FundingSource && $record->exists && ! $user->fundingSources()->whereKey($record->id)->exists()) {
+        if ($record instanceof FundingSource && $record->exists && ! $user->fundingSources()->whereKey($record->getKey())->exists()) {
             throw new AuthorizationException('You cannot configure this funding source.');
         }
         $before = $record->toArray();
+        if ($record instanceof FiscalYear && $record->exists && $record->status === 'closed') {
+            $this->ensure(($attributes['status'] ?? 'closed') === 'closed', 'Use the controlled fiscal-year reopen action and provide a reason.');
+        }
         $record->fill($attributes)->save();
         if ($record instanceof FundingSource && ! isset($data['id'])) {
             $record->users()->attach($user->id);
@@ -195,6 +251,21 @@ return $value;
         return $record;
     }
 
+    /** @param array<string, mixed> $data */
+    private function reopenYear(User $user, array $data): FiscalYear
+    {
+        Access::assert($user, 'fiscal.reopen');
+        $this->ensure(filled($data['reason'] ?? null), 'A reason is required to reopen a fiscal year.', 'reason');
+        $year = FiscalYear::whereKey($data['id'])->lockForUpdate()->firstOrFail();
+        $this->ensure($year->status === 'closed', 'Only a closed fiscal year may be reopened.');
+        $before = $year->toArray();
+        $year->update(['status' => 'open']);
+        $this->audit($user, $year, 'fiscal-year.reopened', $before, $data['reason']);
+
+        return $year;
+    }
+
+    /** @param array<string, mixed> $data */
     private function allocation(User $user, array $data): BudgetAdjustment
     {
         Access::assert($user, 'budgets.manage', (int) $data['funding_source_id']);
@@ -207,18 +278,16 @@ return $value;
         return $record;
     }
 
+    /** @param array<string, mixed> $data */
     private function allocationDecision(User $user, array $data): BudgetAdjustment
     {
         $adjustment = BudgetAdjustment::whereKey($data['id'])->lockForUpdate()->firstOrFail();
         $allocation = BudgetAllocation::whereKey($adjustment->budget_allocation_id)->lockForUpdate()->firstOrFail();
-        Access::assert($user, 'requests.approve', (int) $allocation->funding_source_id);
-        $this->ensure($user->hasRole(['Fund Approver', 'Super Administrator', 'System Administrator']), 'Only fund approvers may authorize budget changes.');
+        Access::assert($user, 'budget.approve', (int) $allocation->funding_source_id);
         Gate::forUser($user)->authorize('approve', $adjustment);
         $this->activeYear((int) $allocation->fiscal_year_id);
         $this->ensure($adjustment->status === 'submitted', 'This allocation change has already been reviewed.');
-        $adjustment->setAttribute('funding_source_id', $allocation->funding_source_id);
-        $this->decision($user, $adjustment, $data['decision'], $data['comment'] ?? null);
-        $adjustment->offsetUnset('funding_source_id');
+        $this->decision($user, $adjustment, $data['decision'], $data['comment'] ?? null, fund: (int) $allocation->funding_source_id);
         if ($data['decision'] === 'approved') {
             $new = Decimal::add($allocation->authorized_amount, $adjustment->amount, 2);
             $totals = $this->budget($allocation);
@@ -232,15 +301,19 @@ return $value;
         return $adjustment;
     }
 
+    /** @return array{allocation: numeric-string, committed: numeric-string, spent: numeric-string, available: numeric-string} */
     public function budget(BudgetAllocation $allocation): array
     {
-        $entries = FinancialEntry::where('budget_allocation_id', $allocation->id)->get();
-        $committed = Decimal::sum($entries->pluck('commitment_delta'));
-        $spent = Decimal::sum($entries->pluck('expenditure_delta'));
+        $totals = FinancialEntry::where('budget_allocation_id', $allocation->id)
+            ->selectRaw('COALESCE(SUM(commitment_delta), 0) AS committed, COALESCE(SUM(expenditure_delta), 0) AS spent')
+            ->first();
+        $committed = Decimal::add((string) $totals->getAttribute('committed'), '0', 2);
+        $spent = Decimal::add((string) $totals->getAttribute('spent'), '0', 2);
 
         return ['allocation' => $allocation->authorized_amount, 'committed' => $committed, 'spent' => $spent, 'available' => Decimal::sub(Decimal::sub($allocation->authorized_amount, $committed, 2), $spent, 2)];
     }
 
+    /** @param array<string, mixed> $data */
     private function projection(User $user, array $data): AnnualProjection
     {
         Access::assert($user, 'budgets.manage', (int) $data['funding_source_id'], (int) $data['department_id']);
@@ -249,7 +322,7 @@ return $value;
         if (! empty($data['original_projection_id'])) {
             $original = $this->record($user, AnnualProjection::class, (int) $data['original_projection_id'], 'budgets.manage');
             $this->ensure($original->status === 'approved' && (int) $original->funding_source_id === (int) $data['funding_source_id'] && (int) $original->fiscal_year_id === (int) $data['fiscal_year_id'] && (int) $original->department_id === (int) $data['department_id'], 'Amendments must retain the original fiscal year, department, and fund.');
-            $original = $original->original_projection_id ? AnnualProjection::findOrFail($original->original_projection_id) : $original;
+            $original = $original->original_projection_id ? AnnualProjection::whereKey($original->original_projection_id)->firstOrFail() : $original;
             $this->ensure(! AnnualProjection::where('original_projection_id', $original->id)->when(! empty($data['id']), fn ($q) => $q->where('id', '<>', $data['id']))->whereIn('status', ['draft', 'submitted', 'returned'])->exists(), 'Complete the pending amendment first.');
         }
         $lines = $this->costedLines($data['lines']);
@@ -267,6 +340,10 @@ return $value;
         return $projection;
     }
 
+    /**
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return array<int, array<string, mixed>>
+     */
     private function costedLines(array $lines): array
     {
         $this->ensure(count($lines) > 0, 'At least one item is required.', 'lines');
@@ -283,6 +360,13 @@ return $value;
         return $lines;
     }
 
+    /**
+     * @template TModel of AnnualProjection|ItemRequest
+     *
+     * @param  class-string<TModel>  $class
+     * @param  array<string, mixed>  $data
+     * @return TModel
+     */
     private function submit(User $user, string $class, array $data, string $permission): Model
     {
         $record = $this->record($user, $class, (int) $data['id'], $permission);
@@ -298,13 +382,13 @@ return $value;
         return $record;
     }
 
+    /** @param array<string, mixed> $data */
     private function projectionDecision(User $user, array $data): AnnualProjection
     {
-        $record = $this->record($user, AnnualProjection::class, (int) $data['id'], 'requests.approve', true);
-        $this->ensure($user->hasRole(['Fund Approver', 'Super Administrator', 'System Administrator']), 'A fund approver must review projections.');
+        $record = $this->record($user, AnnualProjection::class, (int) $data['id'], 'budget.approve', true);
         $this->ensure($record->status === 'submitted', 'Only submitted projections may be reviewed.');
         if ($data['decision'] === 'approved' && ! $record->original_projection_id) {
-            $this->ensure(! AnnualProjection::where('funding_source_id', $record->funding_source_id)->where('fiscal_year_id', $record->fiscal_year_id)->where('department_id', $record->department_id)->whereNull('original_projection_id')->where('status', 'approved')->where('id', '<>', $record->id)->exists(), 'An approved baseline already exists for this fund, year and department. Create an amendment.');
+            $this->ensure(! AnnualProjection::where('funding_source_id', $record->getAttribute('funding_source_id'))->where('fiscal_year_id', $record->getAttribute('fiscal_year_id'))->where('department_id', $record->getAttribute('department_id'))->whereNull('original_projection_id')->where('status', 'approved')->where('id', '<>', $record->getKey())->exists(), 'An approved baseline already exists for this fund, year and department. Create an amendment.');
         }
         $this->decision($user, $record, $data['decision'], $data['comment'] ?? null);
         $before = $record->toArray();
@@ -314,6 +398,7 @@ return $value;
         return $record;
     }
 
+    /** @param array<string, mixed> $data */
     private function requisition(User $user, array $data): ItemRequest
     {
         Access::assert($user, 'requests.create', (int) $data['funding_source_id'], (int) $data['department_id']);
@@ -347,27 +432,62 @@ return $value;
         return $record;
     }
 
+    /** @return list<string> */
     public function approvalRoles(): array
     {
-        return SystemSetting::find('request_approval_roles')?->value ?? ['Department Head', 'Fund Approver'];
+        $roles = SystemSetting::whereKey('request_approval_roles')->first()?->getAttribute('value');
+        if ($roles === null) {
+            return ['Department Head', 'Fund Approver'];
+        }
+        if (! is_array($roles) || ! array_is_list($roles) || array_filter($roles, fn ($role) => ! is_string($role))) {
+            throw ValidationException::withMessages(['workflow' => 'The configured request approval roles are invalid.']);
+        }
+
+        return $roles;
     }
 
+    /**
+     * @param  Collection<int, ApprovalDecision>|null  $history
+     * @param  list<string>|null  $roles
+     */
+    public function canReviewRequestStage(User $user, ItemRequest $record, ?Collection $history = null, ?array $roles = null): bool
+    {
+        $roles ??= $this->approvalRoles();
+        $role = $roles[(int) $record->approval_stage] ?? null;
+        $permission = match ($role) {
+            'Department Head' => 'requests.department-approve',
+            'Fund Approver' => 'fund.approve',
+            default => null,
+        };
+        if (! $role || ! $user->is_active || (int) $record->created_by === $user->id
+            || ! in_array($record->status, ['submitted', 'pending_review'], true)
+            || ! $user->hasPermissionTo('requests.approve')
+            || ($permission ? ! $user->hasPermissionTo($permission) : ! $user->hasRole($role))
+            || ($role === 'Department Head' && (int) $user->department_id !== (int) $record->getAttribute('department_id'))) {
+            return false;
+        }
+
+        // Returned revisions start a new cycle; immutable history must not bar re-review.
+        $history ??= ApprovalDecision::where('subject_type', ItemRequest::class)->where('subject_id', $record->getKey())->get(['id', 'user_id', 'decision']);
+        $cycleStart = $history->whereIn('decision', ['returned', 'rejected'])->max('id') ?? 0;
+
+        return ! $history->contains(fn ($decision) => (int) $decision->id > (int) $cycleStart && (int) $decision->user_id === $user->id);
+    }
+
+    /** @param array<string, mixed> $data */
     private function requestDecision(User $user, array $data): ItemRequest
     {
         $record = $this->record($user, ItemRequest::class, (int) $data['id'], 'requests.approve', true);
         $this->ensure(in_array($record->status, ['submitted', 'pending_review'], true), 'This request is not awaiting approval.');
         $roles = $this->approvalRoles();
         $stage = (int) $record->approval_stage;
-        $this->ensure(isset($roles[$stage]) && $user->hasRole($roles[$stage]), 'You are not the approver for the current stage.');
-        if ($roles[$stage] === 'Department Head') {
-            $this->ensure((int) $user->department_id === (int) $record->department_id, 'The department head must belong to the requesting department.');
-        }
-        $this->ensure(! ($record->is_unplanned && $data['decision'] === 'approved' && $stage === count($roles) - 1) || filled($data['comment'] ?? null), 'Explicit justification is required to approve unplanned items.', 'comment');
+        $this->ensure($this->canReviewRequestStage($user, $record), 'An authorized, different approver is required at each stage.');
+        $this->ensure(! ($record->is_unplanned && $data['decision'] === 'approved') || filled($data['comment'] ?? null), 'Explicit justification is required to approve unplanned items.', 'comment');
         $this->decision($user, $record, $data['decision'], $data['comment'] ?? null, $stage + 1);
         $before = $record->toArray();
         if ($data['decision'] === 'approved') {
             if ($stage + 1 === count($roles)) {
-                $quantities = collect($data['lines'] ?? [])->keyBy('line_id');
+                $quantities = collect($this->commandLines($data))->keyBy('line_id');
                 foreach ($record->lines()->lockForUpdate()->get() as $line) {
                     $qty = $quantities->get($line->id)['approved_quantity'] ?? $line->quantity;
                     $this->ensure(Decimal::cmp($qty, '0') > 0 && Decimal::cmp($qty, $line->quantity) <= 0, 'Approved quantity must be positive and no greater than requested.');
@@ -385,14 +505,21 @@ return $value;
         return $record;
     }
 
+    /** @param array<string, mixed> $data */
     private function cancelRequest(User $user, array $data): ItemRequest
     {
         $record = $this->record($user, ItemRequest::class, (int) $data['id'], 'requests.create');
         $this->requestOwner($user, $record);
-        $this->ensure(! in_array($record->status, ['fulfilled', 'canceled', 'closed'], true), 'This request cannot be canceled.');
+        $this->ensure(! in_array($record->status, ['fulfilled', 'canceled', 'closed', 'rejected'], true), 'This request cannot be canceled.');
         $this->ensure(! $record->purchaseOrders()->whereNot('status', 'canceled')->exists() && ! $record->issuances()->exists(), 'Cancel purchase orders first; requests with issuances must be completed or returned.');
-        StockReservation::whereIn('item_request_line_id', $record->lines()->pluck('id'))->update(['status' => 'released']);
         $before = $record->toArray();
+        $reservations = StockReservation::whereIn('item_request_line_id', $record->lines()->pluck('id'))->where('status', 'active')->orderBy('id')->lockForUpdate()->get();
+        $before['released_reservation_ids'] = $reservations->modelKeys();
+        foreach ($reservations as $reservation) {
+            $prior = $reservation->toArray();
+            $reservation->update(['status' => 'released']);
+            $this->audit($user, $reservation, 'stock.reservation_released', $prior, $data['reason'], (int) $record->getAttribute('funding_source_id'));
+        }
         $record->update(['status' => 'canceled']);
         $this->audit($user, $record, 'request.canceled', $before, $data['reason']);
 
@@ -406,6 +533,7 @@ return $value;
         }
     }
 
+    /** @param array<string, mixed> $data */
     private function purchase(User $user, array $data): PurchaseOrder
     {
         $request = $this->record($user, ItemRequest::class, (int) $data['item_request_id'], 'procurement.manage');
@@ -429,16 +557,16 @@ return $value;
 
     private function allocationFor(Model $record): BudgetAllocation
     {
-        $allocation = BudgetAllocation::where('funding_source_id', $record->funding_source_id)->where('fiscal_year_id', $record->fiscal_year_id)->lockForUpdate()->first();
+        $allocation = BudgetAllocation::where('funding_source_id', $record->getAttribute('funding_source_id'))->where('fiscal_year_id', $record->getAttribute('fiscal_year_id'))->lockForUpdate()->first();
         $this->ensure($allocation !== null, 'Authorize a budget allocation for this fund and year first.');
 
         return $allocation;
     }
 
+    /** @param array<string, mixed> $data */
     private function approvePurchase(User $user, array $data): PurchaseOrder
     {
-        $order = $this->record($user, PurchaseOrder::class, (int) $data['id'], 'requests.approve', true);
-        $this->ensure($user->hasRole(['Fund Approver', 'Super Administrator', 'System Administrator']), 'Only assigned fund approval authorities may approve purchase orders.');
+        $order = $this->record($user, PurchaseOrder::class, (int) $data['id'], 'fund.approve', true);
         $this->ensure($order->status === 'draft', 'Only draft orders can be approved.');
         $allocation = $this->allocationFor($order);
         $budget = $this->budget($allocation);
@@ -454,6 +582,7 @@ return $value;
         return $order;
     }
 
+    /** @param array<string, mixed> $data */
     private function cancelPurchase(User $user, array $data): PurchaseOrder
     {
         $order = $this->record($user, PurchaseOrder::class, (int) $data['id'], 'procurement.manage');
@@ -470,6 +599,7 @@ return $value;
         return $order;
     }
 
+    /** @param array<string, mixed> $data */
     private function spend(User $user, array $data): PurchaseOrder
     {
         $order = $this->record($user, PurchaseOrder::class, (int) $data['id'], 'budgets.manage');
@@ -500,16 +630,17 @@ return $value;
         $after = Decimal::add($balance->quantity, $delta);
         $this->ensure(Decimal::cmp($after, '0') >= 0, 'Insufficient stock. This transaction would make inventory negative.');
         $balance->update(['quantity' => $after]);
-        StockMovement::create(['stock_balance_id' => $balance->id, 'user_id' => $user->id, 'kind' => $kind, 'quantity_delta' => $delta, 'balance_after' => $after, 'source_type' => $source::class, 'source_id' => $source->id, 'remarks' => $remarks, 'created_at' => now()]);
+        StockMovement::create(['stock_balance_id' => $balance->id, 'user_id' => $user->id, 'kind' => $kind, 'quantity_delta' => $delta, 'balance_after' => $after, 'source_type' => $source::class, 'source_id' => $source->getKey(), 'remarks' => $remarks, 'created_at' => now()]);
     }
 
+    /** @param array<string, mixed> $data */
     private function receive(User $user, array $data): GoodsReceipt
     {
         $order = $this->record($user, PurchaseOrder::class, (int) $data['id'], 'inventory.manage');
         $this->ensure(in_array($order->status, ['ordered', 'partially_received'], true), 'Only approved orders with outstanding deliveries can be received.');
         $receipt = GoodsReceipt::create(['reference' => 'GRN-'.Str::upper(Str::random(10)), 'purchase_order_id' => $order->id, 'funding_source_id' => $order->funding_source_id, 'warehouse_id' => $data['warehouse_id'], 'received_by' => $user->id, 'delivery_reference' => $data['delivery_reference'], 'created_at' => now()]);
         $seen = [];
-        foreach (collect($data['lines'])->sortBy('line_id') as $input) {
+        foreach (collect($this->commandLines($data))->sortBy('line_id') as $input) {
             $line = $order->lines()->whereKey($input['line_id'])->lockForUpdate()->firstOrFail();
             $this->ensure(! in_array($line->id, $seen, true), 'Duplicate receiving line.');
             $seen[] = $line->id;
@@ -537,13 +668,14 @@ return $value;
         return Decimal::sub($balance->quantity, Decimal::sum($query->pluck('quantity'), 4));
     }
 
+    /** @param array<string, mixed> $data */
     private function issue(User $user, array $data): StockIssuance
     {
         $request = $this->record($user, ItemRequest::class, (int) $data['id'], 'inventory.manage');
         $this->ensure(in_array($request->status, ['approved', 'partially_fulfilled'], true), 'Only approved outstanding requests may be issued.');
         $issuance = StockIssuance::create(['reference' => 'ISS-'.Str::upper(Str::random(10)), 'item_request_id' => $request->id, 'funding_source_id' => $request->funding_source_id, 'warehouse_id' => $data['warehouse_id'], 'issued_by' => $user->id, 'recipient' => $data['recipient'], 'created_at' => now()]);
         $seen = [];
-        foreach (collect($data['lines'])->sortBy('line_id') as $input) {
+        foreach (collect($this->commandLines($data))->sortBy('line_id') as $input) {
             $line = $request->lines()->whereKey($input['line_id'])->lockForUpdate()->firstOrFail();
             $this->ensure(! in_array($line->id, $seen, true), 'Duplicate issuance line.');
             $seen[] = $line->id;
@@ -560,25 +692,39 @@ return $value;
                 $reservation->update(['quantity' => Decimal::cmp($remaining, '0') > 0 ? $remaining : '0', 'status' => Decimal::cmp($remaining, '0') > 0 ? 'active' : 'fulfilled']);
             }
         }
-        $this->fulfillmentStatus($request);
+        $this->fulfillmentStatus($user, $request);
         $this->audit($user, $issuance, 'stock.issued');
 
         return $issuance;
     }
 
-    private function fulfillmentStatus(ItemRequest $request): void
+    private function fulfillmentStatus(User $user, ItemRequest $request): void
     {
         $lines = $request->lines()->get();
+        foreach ($lines as $line) {
+            $remaining = Decimal::sub($line->approved_quantity, $line->fulfilled_quantity);
+            $reservations = StockReservation::where('item_request_line_id', $line->id)->where('status', 'active')->orderBy('stock_balance_id')->lockForUpdate()->get();
+            foreach ($reservations as $reservation) {
+                $keep = Decimal::cmp($remaining, $reservation->quantity) >= 0 ? $reservation->quantity : $remaining;
+                if (Decimal::cmp($keep, $reservation->quantity) < 0) {
+                    $before = $reservation->toArray();
+                    $reservation->update(['quantity' => $keep, 'status' => Decimal::cmp($keep, '0') > 0 ? 'active' : 'released']);
+                    $this->audit($user, $reservation, 'stock.reservation_released', $before, 'Released excess reservation after fulfillment.', (int) $request->funding_source_id);
+                }
+                $remaining = Decimal::sub($remaining, $keep);
+            }
+        }
         $complete = $lines->every(fn ($line) => Decimal::cmp($line->fulfilled_quantity, $line->approved_quantity) === 0);
         $any = $lines->contains(fn ($line) => Decimal::cmp($line->fulfilled_quantity, '0') > 0);
         $request->update(['status' => $complete ? 'fulfilled' : ($any ? 'partially_fulfilled' : 'approved')]);
     }
 
+    /** @param array<string, mixed> $data */
     private function returnStock(User $user, array $data): StockIssuance
     {
         $issuance = $this->record($user, StockIssuance::class, (int) $data['id'], 'inventory.manage');
         $request = $this->record($user, ItemRequest::class, (int) $issuance->item_request_id, 'inventory.manage');
-        foreach (collect($data['lines'])->sortBy('line_id') as $input) {
+        foreach (collect($this->commandLines($data))->sortBy('line_id') as $input) {
             $line = $issuance->lines()->whereKey($input['line_id'])->lockForUpdate()->firstOrFail();
             $qty = (string) $input['quantity'];
             $this->ensure(Decimal::cmp($qty, '0') > 0 && Decimal::cmp(Decimal::add($line->returned_quantity, $qty), $line->quantity) <= 0, 'Return exceeds the issued quantity.');
@@ -588,12 +734,13 @@ return $value;
             $requestLine = ItemRequestLine::whereKey($line->item_request_line_id)->lockForUpdate()->firstOrFail();
             $requestLine->update(['fulfilled_quantity' => Decimal::sub($requestLine->fulfilled_quantity, $qty)]);
         }
-        $this->fulfillmentStatus($request);
+        $this->fulfillmentStatus($user, $request);
         $this->audit($user, $issuance, 'stock.returned', [], $data['reason']);
 
         return $issuance;
     }
 
+    /** @param array<string, mixed> $data */
     private function reserve(User $user, array $data): StockReservation
     {
         $request = $this->record($user, ItemRequest::class, (int) $data['id'], 'inventory.manage');
@@ -601,19 +748,24 @@ return $value;
         $line = $request->lines()->whereKey($data['line_id'])->lockForUpdate()->firstOrFail();
         $qty = (string) $data['quantity'];
         $balance = $this->balance((int) $request->funding_source_id, (int) $data['warehouse_id'], (int) $line->item_id);
-        $this->ensure(Decimal::cmp($qty, '0') > 0 && Decimal::cmp($qty, $this->available($balance, (int) $line->id)) <= 0 && Decimal::cmp($qty, Decimal::sub($line->approved_quantity, $line->fulfilled_quantity)) <= 0, 'Reservation exceeds available stock or the remaining request.');
+        $other = Decimal::sum(StockReservation::where('item_request_line_id', $line->id)->where('status', 'active')->where('stock_balance_id', '<>', $balance->id)->pluck('quantity'), 4);
+        $remaining = Decimal::sub(Decimal::sub($line->approved_quantity, $line->fulfilled_quantity), $other);
+        $this->ensure(Decimal::cmp($qty, '0') > 0 && Decimal::cmp($qty, $this->available($balance, (int) $line->id)) <= 0 && Decimal::cmp($qty, $remaining) <= 0, 'Reservation exceeds available stock or the remaining request.');
         $reservation = StockReservation::updateOrCreate(['item_request_line_id' => $line->id, 'stock_balance_id' => $balance->id], ['user_id' => $user->id, 'quantity' => $qty, 'status' => 'active']);
         $this->audit($user, $reservation, 'stock.reserved', [], null, (int) $request->funding_source_id);
 
         return $reservation;
     }
 
+    /** @param array<string, mixed> $data */
     private function transfer(User $user, array $data): StockTransfer
     {
         Access::assert($user, 'inventory.manage', (int) $data['funding_source_id']);
-        $year = FiscalYear::whereDate('starts_on', '<=', today())->whereDate('ends_on', '>=', today())->first();
+        $effectiveOn = $data['effective_on'] ?? today()->format('Y-m-d');
+        $year = isset($data['fiscal_year_id']) ? FiscalYear::whereKey($data['fiscal_year_id'])->firstOrFail() : FiscalYear::whereDate('starts_on', '<=', $effectiveOn)->whereDate('ends_on', '>=', $effectiveOn)->first();
         $this->ensure($year !== null, 'Open a fiscal year covering the transfer date first.');
-        $this->activeYear((int) $year->id);
+        $year = $this->activeYear((int) $year->id);
+        $this->ensure($effectiveOn >= (string) $year->starts_on && $effectiveOn <= (string) $year->ends_on, 'The transfer date must fall within the selected fiscal year.', 'effective_on');
         $this->ensure((int) $data['warehouse_id'] !== (int) $data['destination_warehouse_id'], 'Select two different storage locations.');
         $warehouses = [(int) $data['warehouse_id'], (int) $data['destination_warehouse_id']];
         sort($warehouses);
@@ -625,7 +777,7 @@ return $value;
         $destination = $balances[$data['destination_warehouse_id']];
         $qty = (string) $data['quantity'];
         $this->ensure(Decimal::cmp($qty, '0') > 0 && Decimal::cmp($qty, $this->available($source)) <= 0, 'Insufficient unreserved stock for transfer.');
-        $transfer = StockTransfer::create(['reference' => 'TRF-'.Str::upper(Str::random(10)), 'funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $year->id, 'source_warehouse_id' => $data['warehouse_id'], 'destination_warehouse_id' => $data['destination_warehouse_id'], 'item_id' => $data['item_id'], 'quantity' => $qty, 'created_by' => $user->id, 'reason' => $data['reason'], 'created_at' => now()]);
+        $transfer = StockTransfer::create(['reference' => 'TRF-'.Str::upper(Str::random(10)), 'funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $year->id, 'effective_on' => $effectiveOn, 'source_warehouse_id' => $data['warehouse_id'], 'destination_warehouse_id' => $data['destination_warehouse_id'], 'item_id' => $data['item_id'], 'quantity' => $qty, 'created_by' => $user->id, 'reason' => $data['reason'], 'created_at' => now()]);
         $this->move($user, $source, Decimal::sub('0', $qty), 'transfer_out', $transfer, $data['reason']);
         $this->move($user, $destination, $qty, 'transfer_in', $transfer, $data['reason']);
         $this->audit($user, $transfer, 'stock.transferred', [], $data['reason']);
@@ -633,6 +785,7 @@ return $value;
         return $transfer;
     }
 
+    /** @param array<string, mixed> $data */
     private function count(User $user, array $data): InventoryCount
     {
         Access::assert($user, 'inventory.manage', (int) $data['funding_source_id']);
@@ -642,16 +795,17 @@ return $value;
         Access::assert($counter, 'inventory.manage', (int) $data['funding_source_id']);
         $this->ensure(! InventoryCount::where('funding_source_id', $data['funding_source_id'])->where('warehouse_id', $data['warehouse_id'])->whereNotIn('status', ['reconciled', 'closed', 'rejected'])->exists(), 'Finish the active count for this fund and location first.');
         // Every movement locks its balance; lock all current balances before recording cutoff and snapshot.
-        $balances = StockBalance::where('funding_source_id', $data['funding_source_id'])->where('warehouse_id', $data['warehouse_id'])->orderBy('item_id')->lockForUpdate()->get();
+        $balances = StockBalance::where('funding_source_id', $data['funding_source_id'])->where('warehouse_id', $data['warehouse_id'])->orderBy('item_id')->lockForUpdate()->get()->keyBy('item_id');
         $count = InventoryCount::create(['reference' => 'CNT-'.Str::upper(Str::random(10)), 'funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $data['fiscal_year_id'], 'warehouse_id' => $data['warehouse_id'], 'created_by' => $user->id, 'counter_id' => $counter->id, 'count_month' => $data['count_month'], 'cutoff_at' => now(), 'status' => 'counting']);
-        foreach (Item::where('is_active', true)->orderBy('id')->get() as $item) {
-            $count->lines()->create(['item_id' => $item->id, 'system_quantity' => $balances->firstWhere('item_id', $item->id)?->quantity ?? '0']);
-        }
+        Item::where('is_active', true)->orderBy('id')->chunkById(500, function ($items) use ($count, $balances) {
+            DB::table('inventory_count_lines')->insert($items->map(fn ($item) => ['inventory_count_id' => $count->id, 'item_id' => $item->id, 'system_quantity' => $balances->has($item->id) ? $balances->get($item->id)->quantity : '0'])->all());
+        });
         $this->audit($user, $count, 'count.created');
 
         return $count;
     }
 
+    /** @param array<string, mixed> $data */
     private function encodeCount(User $user, array $data): InventoryCount
     {
         $count = $this->record($user, InventoryCount::class, (int) $data['id'], 'inventory.manage');
@@ -670,6 +824,7 @@ return $value;
         return $count;
     }
 
+    /** @param array<string, mixed> $data */
     private function submitCount(User $user, array $data): InventoryCount
     {
         $count = $this->record($user, InventoryCount::class, (int) $data['id'], 'inventory.manage');
@@ -681,6 +836,7 @@ return $value;
         return $count;
     }
 
+    /** @param array<string, mixed> $data */
     private function decideCount(User $user, array $data): InventoryCount
     {
         $count = $this->record($user, InventoryCount::class, (int) $data['id'], 'counts.approve', true);
@@ -692,6 +848,7 @@ return $value;
         return $count;
     }
 
+    /** @param array<string, mixed> $data */
     private function reconcile(User $user, array $data): InventoryCount
     {
         $count = $this->record($user, InventoryCount::class, (int) $data['id'], 'inventory.manage');

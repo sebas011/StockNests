@@ -18,7 +18,7 @@ Open a terminal in the project folder, initialize the environment and generate m
 node scripts/initialize-env.mjs
 docker compose up -d --build
 
-docker compose exec app php artisan migrate --seed
+docker compose exec app php artisan migrate --seed --force
 docker compose exec app php artisan stocknest:admin --email=admin@example.test --name="StockNest Administrator"
 ```
 
@@ -32,7 +32,7 @@ Production seed data should create GAA/APPCSE, stable permissions/role bundles a
 
 ## Optional demonstration data
 
-Only on a disposable local/testing database:
+Only on a disposable database configured with `APP_ENV=local` or `APP_ENV=testing`. Set a unique `DEMO_PASSWORD` of at least 12 characters with upper/lower case, a number and a symbol before seeding. The template defaults to production and the demo seeder refuses production execution:
 
 ```powershell
 docker compose exec app php artisan db:seed --class=DemoSeeder
@@ -53,7 +53,7 @@ npm run build
 composer run dev
 ```
 
-Copy/configure `.env` first as above; with host PHP set database/Redis/mail hosts to their reachable localhost addresses and actual published ports. Do not assume Docker service names resolve on Windows. If no npm lockfile is present, resolve `npm install` once and review/commit the generated lockfile; subsequent clean installs use `npm ci`.
+Copy/configure `.env` first as above; set `APP_ENV=local` for development with hot reloading. Enable `APP_DEBUG=true` only on your private development machine. Hosted installations must retain production mode and debug disabled. With host PHP set database/Redis/mail hosts to their reachable localhost addresses and actual published ports. Do not assume Docker service names resolve on Windows. Use the checked-in lockfile with `npm ci`.
 
 ## Meaningful verification
 
@@ -74,15 +74,15 @@ For complete CI checks the delivered Composer scripts may also run formatter/sta
 
 ## Troubleshooting
 
-| Symptom | Check |
-|---|---|
-| Cannot connect to database | Compose health/status, `.env` host/port/database credentials, cached config and container network |
-| Missing application key | Generate once on new local install; preserve existing keys |
-| New permission/role not visible | Active account, correct guard, scope grants, permission cache invalidation and seed result |
-| Notifications/export pending | Queue worker configuration, failed job list, Redis connection, private storage permissions |
-| Due tasks do not run | Scheduler service is running; only one production scheduler/lock owner where tasks require singleton execution |
-| Frontend assets unavailable | Successful dependency install/build, built manifest in image, compatible Node version, published app URL |
-| PostgreSQL integrity test skipped | Verify real test database/runtime is available; do not substitute a claimed pass |
-| Port 8080 or 8025 in use | Change Compose published host port and corresponding app URL; keep internal service port unchanged |
+| Symptom                           | Check                                                                                                          |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Cannot connect to database        | Compose health/status, `.env` host/port/database credentials, cached config and container network              |
+| Missing application key           | Generate once on new local install; preserve existing keys                                                     |
+| New permission/role not visible   | Active account, correct guard, scope grants, permission cache invalidation and seed result                     |
+| Notifications/export pending      | Queue worker configuration, failed job list, Redis connection, private storage permissions                     |
+| Due tasks do not run              | Scheduler service is running; only one production scheduler/lock owner where tasks require singleton execution |
+| Frontend assets unavailable       | Successful dependency install/build, built manifest in image, compatible Node version, published app URL       |
+| PostgreSQL integrity test skipped | Verify real test database/runtime is available; do not substitute a claimed pass                               |
+| Port 8080 or 8025 in use          | Change Compose published host port and corresponding app URL; keep internal service port unchanged             |
 
 Stopping local containers normally preserves volumes. Commands that remove volumes or reset migrations erase development data and are not part of routine startup.

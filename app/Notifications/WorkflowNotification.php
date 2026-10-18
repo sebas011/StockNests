@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Events\WorkflowChanged;
+use App\Models\User;
 use App\Support\WorkflowVisibility;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -14,11 +15,16 @@ class WorkflowNotification extends Notification
 
     public function __construct(public WorkflowChanged $event) {}
 
+    /** @return list<'database'|'mail'> */
     public function via(object $notifiable): array
     {
         return config('stocknest.notification_email') ? ['database', 'mail'] : ['database'];
     }
 
+    /**
+     * @param  User  $notifiable
+     * @return array{funding_source_id: int, record_type: string, record_id: int, title: string, url: string}
+     */
     public function toArray(object $notifiable): array
     {
         return [
@@ -30,9 +36,10 @@ class WorkflowNotification extends Notification
         ];
     }
 
+    /** @param User $notifiable */
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)->subject('StockNest workflow update')
-            ->line($this->toArray($notifiable)['title'])->action('Open StockNest', url($this->toArray($notifiable)['url']));
+            ->line($this->toArray($notifiable)['title'])->action('Open StockNest', url()->to($this->toArray($notifiable)['url']));
     }
 }

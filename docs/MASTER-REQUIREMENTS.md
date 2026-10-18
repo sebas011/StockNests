@@ -1,4 +1,5 @@
 # MASTER DEVELOPMENT PROMPT
+
 ## Budget-Integrated Inventory Management System
 
 ### 1. Your Role
@@ -57,6 +58,7 @@ Likewise, approving an item request must not automatically decrease stock. Inven
 Build the application using:
 
 **Backend**
+
 - PHP 8.4 or later, compatible with Laravel 13
 - Laravel 13
 - Laravel MVC architecture
@@ -66,6 +68,7 @@ Build the application using:
 - Laravel Events, Notifications, and Queues
 
 **Frontend**
+
 - React 19
 - TypeScript
 - Inertia.js 3
@@ -76,6 +79,7 @@ Build the application using:
 - Accessible, reusable React components
 
 **Database**
+
 - PostgreSQL 18
 - Properly normalized relational schema
 - Foreign keys, constraints, and indexes
@@ -83,6 +87,7 @@ Build the application using:
 - Appropriate decimal data types for quantities and monetary amounts
 
 **Additional tools**
+
 - Spatie Laravel Permission for role-based access
 - Laravel Excel for spreadsheet import/export
 - A maintained PDF generation library
@@ -126,6 +131,7 @@ Suggested roles:
 Roles and permissions must be configurable.
 
 Features:
+
 - Secure login and logout
 - Password reset
 - Account activation/deactivation
@@ -151,6 +157,7 @@ The system initially has two funding sources.
 Do not hardcode funding sources throughout the application. Store them in a dedicated database table so authorized administrators can configure them.
 
 Each funding source must maintain independent:
+
 - Annual projected items
 - Approved estimated budget amounts
 - Budget amendments
@@ -161,6 +168,7 @@ Each funding source must maintain independent:
 - Budget utilization reports
 
 Required features:
+
 - Create and edit funding source profiles
 - Activate/deactivate funding sources
 - Assign authorized approvers
@@ -180,6 +188,7 @@ Create a complete annual projected expense management module.
 At the beginning of each fiscal year, authorized users should be able to prepare projected expenses separately for each funding source.
 
 Each projected line item should contain:
+
 - Fiscal year
 - Funding source
 - Department
@@ -201,6 +210,7 @@ Automatically calculate:
 Estimated Total = Estimated Quantity × Estimated Unit Price
 
 The system must provide:
+
 - Projection creation
 - Draft saving
 - Editing before submission
@@ -237,6 +247,7 @@ Create a budget monitoring module that distinguishes the following:
 Do not automatically assume the total projected cost is the same as the legally or administratively authorized spending limit. Support a configurable relationship between projection approval and budget authorization.
 
 Support:
+
 - Revised item quantities
 - Revised estimated costs
 - Addition of unplanned items
@@ -266,6 +277,7 @@ Avoid double-counting commitments and actual spending when purchase orders trans
 Create a centralized item catalog.
 
 Each item should include:
+
 - Unique item code/SKU
 - Item name
 - Category
@@ -285,6 +297,7 @@ Each item should include:
 - Optional expiration date and batch tracking
 
 Provide:
+
 - Search
 - Filters
 - Sorting
@@ -304,6 +317,7 @@ Build a monthly requisition system.
 Authorized users must be able to submit requests for items.
 
 Each request should include:
+
 - Unique request number
 - Request date
 - Requested delivery or fulfillment date
@@ -332,6 +346,7 @@ Pending Fulfillment → Partially Fulfilled → Fulfilled → Closed
 Canceled must be a controlled status with cancellation reasons and appropriate permissions.
 
 Requirements:
+
 - Requests must never be automatically approved by default.
 - Approvers must be able to approve, reject, or return requests.
 - Support configurable multilevel approvals.
@@ -355,6 +370,7 @@ Request approval must not automatically purchase items, create inventory, or ded
 Implement a purchasing workflow for approved requests requiring additional stock.
 
 Functions:
+
 - Procurement requisitions
 - Supplier selection
 - Purchase order creation
@@ -373,6 +389,7 @@ Suggested workflow:
 Approved Request → Procurement Review → Purchase Order → Order Approval → Ordered → Received / Partially Received → Closed
 
 The system should maintain a clear relationship between:
+
 - Original projection
 - Approved monthly request
 - Purchase order
@@ -390,6 +407,7 @@ Support cancellation, returns, partial deliveries, and the release or reversal o
 Track actual physical inventory.
 
 Implement:
+
 - Stock receipts
 - Stock issuances
 - Stock returns
@@ -405,6 +423,7 @@ Implement:
 - Optional batch or lot tracking
 
 Every stock movement must record:
+
 - Transaction reference
 - Item
 - Quantity
@@ -431,6 +450,7 @@ If physical stock funded by different sources is stored in one location, maintai
 Approved requests for available stock should be fulfilled through an issuance process.
 
 Features:
+
 - Approved request queue
 - Available inventory lookup
 - Reservation of stock
@@ -458,6 +478,7 @@ Our organization performs manual physical inventory every month.
 Build a physical inventory counting and reconciliation system.
 
 Functions:
+
 - Create monthly inventory count sessions
 - Define counting month and date
 - Select warehouse/location
@@ -473,6 +494,7 @@ Functions:
 - Generate reconciliation reports
 
 Each count entry should capture:
+
 - Item code
 - Item name
 - Storage location
@@ -509,6 +531,7 @@ Maintain historical count results and adjustment records.
 Build role-specific dashboards.
 
 The main dashboard should provide:
+
 - Current fiscal year
 - Total projected annual expenses
 - Original and revised projections
@@ -527,6 +550,7 @@ The main dashboard should provide:
 - Overdue physical counts
 
 Provide charts showing:
+
 - Projected versus actual expenses
 - Monthly spending trends
 - Budget utilization by funding source
@@ -544,6 +568,7 @@ Do not use hardcoded demo values outside a clearly identified demonstration or d
 Provide comprehensive reports.
 
 Required reports:
+
 1. Annual projected expense report
 2. Approved annual budget report
 3. Original versus revised projection report
@@ -565,6 +590,7 @@ Required reports:
 19. Audit trail report
 
 Each report should support relevant filters, such as:
+
 - Fiscal year
 - Month/date range
 - Funding source
@@ -586,6 +612,7 @@ Reports must respect user permissions and fund visibility restrictions.
 Implement a centralized approval and notification center.
 
 Notify users when:
+
 - A projection is submitted
 - A projection is approved/rejected
 - A budget amendment requires approval
@@ -602,6 +629,7 @@ Notify users when:
 Support in-app notifications and optional email notifications.
 
 Provide:
+
 - Pending approval inbox
 - Notification history
 - Unread notification indicators
@@ -615,6 +643,7 @@ All approval decisions must remain auditable.
 Record all significant user and financial activities.
 
 Track:
+
 - Login events
 - Record creation
 - Record modifications
@@ -632,6 +661,7 @@ Track:
 Where appropriate, store previous and updated values.
 
 Audit records must include:
+
 - User
 - Action
 - Timestamp
@@ -646,6 +676,7 @@ Implement audit retention and archival controls.
 #### MODULE O — Administration and System Configuration
 
 Provide administrative configuration for:
+
 - Organization information
 - Funding sources
 - Departments
@@ -675,6 +706,7 @@ Design a properly normalized PostgreSQL database.
 At minimum, evaluate the need for these entities:
 
 **Organization and access**
+
 - users
 - roles
 - permissions
@@ -686,6 +718,7 @@ At minimum, evaluate the need for these entities:
 - activity_logs
 
 **Budgeting**
+
 - fiscal_years
 - annual_projections
 - projection_items
@@ -697,6 +730,7 @@ At minimum, evaluate the need for these entities:
 - expenditure_records
 
 **Items and procurement**
+
 - items
 - item_categories
 - units_of_measure
@@ -709,6 +743,7 @@ At minimum, evaluate the need for these entities:
 - goods_receipt_lines
 
 **Inventory**
+
 - warehouses
 - stock_locations
 - stock_lots
@@ -722,6 +757,7 @@ At minimum, evaluate the need for these entities:
 - stock_transfers
 
 **System**
+
 - notifications
 - attachments
 - system_settings
@@ -732,6 +768,7 @@ These are suggested entities, not mandatory final table names.
 Refine the schema to avoid duplication, enforce referential integrity, and support all business rules.
 
 Generate:
+
 - Entity relationship diagram
 - Database migration files
 - Foreign keys and constraints
@@ -754,6 +791,7 @@ Build a professional, modern enterprise application.
 The interface should feel like polished financial and inventory management software rather than a basic school project.
 
 Use:
+
 - Clean dashboard layout
 - Collapsible sidebar
 - Top navigation
@@ -781,6 +819,7 @@ Use shadcn/ui and Tailwind CSS consistently.
 For complex workflows, provide clear step-based interfaces and status timelines.
 
 Approval screens should present:
+
 - Request details
 - Requested items
 - Budget availability
@@ -827,6 +866,7 @@ The following rules are mandatory:
 ### 8. Security Requirements
 
 Implement:
+
 - Server-side request validation
 - Password hashing
 - CSRF protection
@@ -857,6 +897,7 @@ Follow this sequence.
 **Phase 1 — Requirements and Architecture**
 
 First produce:
+
 - Business process analysis
 - Assumptions requiring confirmation
 - User roles and permissions matrix
@@ -874,6 +915,7 @@ Use sensible, configurable defaults where requirements are not yet finalized.
 **Phase 2 — Project Foundation**
 
 Create:
+
 - Laravel project
 - React/Inertia integration
 - PostgreSQL configuration
@@ -885,6 +927,7 @@ Create:
 **Phase 3 — Core Budgeting**
 
 Implement:
+
 - Funding sources
 - Fiscal years
 - Item catalog
@@ -896,6 +939,7 @@ Implement:
 **Phase 4 — Monthly Operations**
 
 Implement:
+
 - Monthly requests
 - Approval workflows
 - Purchase orders
@@ -906,6 +950,7 @@ Implement:
 **Phase 5 — Physical Inventory**
 
 Implement:
+
 - Monthly counting sessions
 - Count sheets
 - Manual counts
@@ -915,6 +960,7 @@ Implement:
 **Phase 6 — Reporting and Administration**
 
 Implement:
+
 - Dashboard analytics
 - Reports
 - Export functionality
@@ -925,6 +971,7 @@ Implement:
 **Phase 7 — Testing and Deployment**
 
 Implement:
+
 - Backend tests
 - Frontend tests
 - End-to-end workflow tests

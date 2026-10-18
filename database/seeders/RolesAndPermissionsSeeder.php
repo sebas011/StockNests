@@ -12,7 +12,7 @@ class RolesAndPermissionsSeeder extends Seeder
     public function run(): void
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $permissions = ['dashboard.view', 'master-data.manage', 'budgets.manage', 'requests.create', 'requests.approve', 'procurement.manage', 'inventory.manage', 'counts.approve', 'reports.view', 'audit.view', 'users.manage', 'roles.manage'];
+        $permissions = ['dashboard.view', 'master-data.manage', 'budgets.manage', 'budget.approve', 'fund.approve', 'requests.department-approve', 'fiscal.reopen', 'requests.create', 'requests.approve', 'procurement.manage', 'inventory.manage', 'counts.approve', 'reports.view', 'audit.view', 'users.manage', 'roles.manage'];
         foreach ($permissions as $permission) {
             Permission::findOrCreate($permission, 'web');
         }
@@ -23,8 +23,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'System Administrator' => $permissions,
             'Budget Officer' => ['dashboard.view', 'budgets.manage', 'reports.view'],
             'Department Requester' => ['dashboard.view', 'requests.create'],
-            'Department Head' => ['dashboard.view', 'requests.approve', 'reports.view'],
-            'Fund Approver' => ['dashboard.view', 'requests.approve', 'counts.approve', 'reports.view'],
+            'Department Head' => ['dashboard.view', 'requests.approve', 'requests.department-approve', 'reports.view'],
+            'Fund Approver' => ['dashboard.view', 'requests.approve', 'fund.approve', 'budget.approve', 'counts.approve', 'reports.view'],
             'Procurement Officer' => ['dashboard.view', 'procurement.manage', 'reports.view'],
             'Inventory Custodian' => ['dashboard.view', 'inventory.manage', 'reports.view'],
             'Auditor' => ['dashboard.view', 'reports.view', 'audit.view'],

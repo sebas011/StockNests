@@ -28,11 +28,14 @@ final class DemoSeeder extends Seeder
         }
         $this->call([RolesAndPermissionsSeeder::class, StockNestSeeder::class]);
         if (User::where('email', 'requester@stocknest.test')->exists()) {
-            $this->command?->warn('Demo users already exist; demo setup was skipped.');
+            if (isset($this->command)) {
+                $this->command->warn('Demo users already exist; demo setup was skipped.');
+            }
 
             return;
         }
-        $password = env('DEMO_PASSWORD') ?: Str::password(20);
+        $configuredPassword = config('stocknest.demo_password');
+        $password = is_string($configuredPassword) && $configuredPassword !== '' ? $configuredPassword : Str::password(20);
         $department = Department::where('code', 'OPS')->firstOrFail();
         $fundIds = FundingSource::pluck('id')->all();
         $year = FiscalYear::where('year', now()->year)->firstOrFail();
@@ -61,17 +64,19 @@ final class DemoSeeder extends Seeder
             $run('requester', 'request.submit', ['id' => $req['id']]);
             $run('head', 'request.decide', ['id' => $req['id'], 'decision' => 'approved', 'comment' => 'Department need verified.']);
             $run('approver', 'request.decide', ['id' => $req['id'], 'decision' => 'approved', 'comment' => 'Fund verified.']);
-            $request = ItemRequest::findOrFail($req['id']);
-            $po = $run('procurement', 'purchase.create', ['item_request_id' => $request->id, 'supplier_id' => $supplier->id, 'lines' => [['line_id' => $request->lines->first()->id, 'quantity' => '50', 'unit_price' => '245.00']]]);
+            $request = ItemRequest::whereKey($req['id'])->firstOrFail();
+            $po = $run('procurement', 'purchase.create', ['item_request_id' => $request->id, 'supplier_id' => $supplier->id, 'lines' => [['line_id' => $request->lines()->firstOrFail()->id, 'quantity' => '50', 'unit_price' => '245.00']]]);
             $run('approver', 'purchase.approve', ['id' => $po['id'], 'comment' => 'Purchase authorized.']);
-            $order = PurchaseOrder::findOrFail($po['id']);
-            $run('custodian', 'receipt.create', ['id' => $order->id, 'warehouse_id' => Warehouse::firstOrFail()->id, 'delivery_reference' => 'DEMO-DR-'.$fund->code, 'lines' => [['line_id' => $order->lines->first()->id, 'quantity' => '50']]]);
+            $order = PurchaseOrder::whereKey($po['id'])->firstOrFail();
+            $run('custodian', 'receipt.create', ['id' => $order->id, 'warehouse_id' => Warehouse::firstOrFail()->id, 'delivery_reference' => 'DEMO-DR-'.$fund->code, 'lines' => [['line_id' => $order->lines()->firstOrFail()->id, 'quantity' => '50']]]);
             $run('budget', 'purchase.spend', ['id' => $order->id, 'amount' => '12250.00', 'document_reference' => 'DEMO-INV-'.$fund->code, 'final_payment' => true]);
             if ($fund->code === 'APPCSE') {
-                $run('custodian', 'issuance.create', ['id' => $request->id, 'warehouse_id' => Warehouse::firstOrFail()->id, 'recipient' => 'Demo Operations representative', 'lines' => [['line_id' => $request->lines->first()->id, 'quantity' => '10']]]);
+                $run('custodian', 'issuance.create', ['id' => $request->id, 'warehouse_id' => Warehouse::firstOrFail()->id, 'recipient' => 'Demo Operations representative', 'lines' => [['line_id' => $request->lines()->firstOrFail()->id, 'quantity' => '10']]]);
             }
         }
-        $this->command?->info('Demo data installed. Login: admin@stocknest.test');
-        $this->command?->info('Local demo password for all demo accounts: '.$password);
+        if (isset($this->command)) {
+            $this->command->info('Demo data installed. Login: admin@stocknest.test');
+            $this->command->info('Local demo password for all demo accounts: '.$password);
+        }
     }
 }

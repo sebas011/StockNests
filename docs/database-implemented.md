@@ -2,6 +2,8 @@
 
 This describes the checked-in migrations; [the full proposed schema](database-design.md) is broader. Documents and physical balances carry fund attribution while items are shared.
 
+The October 17 audit migrations add `users.must_change_password` (default false for existing accounts) and nullable `stock_transfers.effective_on` (preserving historical transfers). Newly administrator-created accounts must replace their initial password. New transfers persist their effective date and validate it against the selected open fiscal year. The same upgrade adds explicit approval/reopening permissions without replacing existing customized role grants.
+
 ```mermaid
 erDiagram
     DEPARTMENTS ||--o{ USERS : assigns

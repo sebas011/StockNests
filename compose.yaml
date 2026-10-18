@@ -1,74 +1,83 @@
 name: stocknest
 
 x-app: &application
-  build: .
-  env_file: .env
-  environment: &application-env
-    DB_HOST: db
-    DB_PORT: 5432
-    REDIS_HOST: redis
-    CACHE_STORE: redis
-    QUEUE_CONNECTION: redis
-    MAIL_MAILER: smtp
-    MAIL_HOST: mailpit
-    MAIL_PORT: 1025
-  volumes:
-    - app-storage:/var/www/html/storage
-  depends_on:
-    db:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
+    build: .
+    env_file: .env
+    environment: &application-env
+        DB_HOST: db
+        DB_PORT: 5432
+        REDIS_HOST: redis
+        CACHE_STORE: redis
+        QUEUE_CONNECTION: redis
+        LOG_STACK: stderr
+        MAIL_MAILER: smtp
+        MAIL_HOST: mailpit
+        MAIL_PORT: 1025
+    volumes:
+        - app-storage:/var/www/html/storage
+    depends_on:
+        db:
+            condition: service_healthy
+        redis:
+            condition: service_healthy
 
 services:
-  app:
-    <<: *application
-    ports:
-      - "127.0.0.1:8080:80"
-    healthcheck:
-      test: [CMD, curl, -fsS, http://localhost/up]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-  queue:
-    <<: *application
-    command: [php, artisan, "queue:work", "--tries=3", "--timeout=120"]
-    restart: unless-stopped
-  scheduler:
-    <<: *application
-    command: [php, artisan, "schedule:work"]
-    restart: unless-stopped
-  db:
-    image: postgres:18-alpine
-    environment:
-      POSTGRES_DB: ${DB_DATABASE:-stocknest}
-      POSTGRES_USER: ${DB_USERNAME:-stocknest}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set a database password in .env}
-    ports:
-      - "127.0.0.1:54329:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql
-    healthcheck:
-      test: [CMD-SHELL, "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-  redis:
-    image: redis:8-alpine
-    command: [redis-server, --appendonly, "yes"]
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: [CMD, redis-cli, ping]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-  mailpit:
-    image: axllent/mailpit:v1.27
-    ports:
-      - "127.0.0.1:8025:8025"
+    app:
+        <<: *application
+        ports:
+            - '127.0.0.1:8080:80'
+        healthcheck:
+            test: [CMD, curl, -fsS, http://localhost/up]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+    queue:
+        <<: *application
+        user: '33:33'
+        depends_on:
+            app:
+                condition: service_healthy
+        command: [php, artisan, 'queue:work', '--tries=3', '--timeout=120']
+        restart: unless-stopped
+    scheduler:
+        <<: *application
+        user: '33:33'
+        depends_on:
+            app:
+                condition: service_healthy
+        command: [php, artisan, 'schedule:work']
+        restart: unless-stopped
+    db:
+        image: postgres:18-alpine
+        environment:
+            POSTGRES_DB: ${DB_DATABASE:-stocknest}
+            POSTGRES_USER: ${DB_USERNAME:-stocknest}
+            POSTGRES_PASSWORD: ${DB_PASSWORD:?Set a database password in .env}
+        ports:
+            - '127.0.0.1:54329:5432'
+        volumes:
+            - pgdata:/var/lib/postgresql
+        healthcheck:
+            test: [CMD-SHELL, 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 10
+    redis:
+        image: redis:8-alpine
+        command: [redis-server, --appendonly, 'yes']
+        volumes:
+            - redis-data:/data
+        healthcheck:
+            test: [CMD, redis-cli, ping]
+            interval: 5s
+            timeout: 3s
+            retries: 5
+    mailpit:
+        image: axllent/mailpit:v1.27
+        ports:
+            - '127.0.0.1:8025:8025'
 
 volumes:
-  pgdata:
-  app-storage:
-  redis-data:
+    pgdata:
+    app-storage:
+    redis-data:

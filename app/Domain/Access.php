@@ -8,12 +8,14 @@ use App\Models\ItemRequest;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 
 final class Access
 {
+    /** @return array<int, int> */
     public static function fundIds(User $user): array
     {
-        return $user->fundingSources()->where('is_active', true)->pluck('funding_sources.id')->all();
+        return $user->fundingSources()->where('is_active', true)->pluck('funding_sources.id')->map(fn ($id): int => (int) $id)->all();
     }
 
     public static function assert(User $user, string $permission, ?int $fund = null, ?int $department = null): void
@@ -32,10 +34,16 @@ final class Access
         return ! $user->hasAnyRole(['Super Administrator', 'System Administrator', 'Budget Officer', 'Fund Approver', 'Procurement Officer', 'Inventory Custodian', 'Auditor']);
     }
 
+    /**
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @return Builder<TModel>
+     */
     public static function scope(Builder $query, User $user, bool $department = false): Builder
     {
         if ($query->getModel() instanceof AuditLog && $user->can('audit.view')
-            && FundingSource::pluck('id')->diff($user->fundingSources()->pluck('funding_sources.id'))->isEmpty()) {
+            && FundingSource::whereNotIn('id', $user->fundingSources()->pluck('funding_sources.id'))->doesntExist()) {
             $query->where(fn ($q) => $q->whereIn('funding_source_id', self::fundIds($user))->orWhereNull('funding_source_id'));
         } else {
             $query->whereIn('funding_source_id', self::fundIds($user));

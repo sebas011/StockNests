@@ -16,30 +16,30 @@ The requested stack is PHP 8.4 or later compatible with Laravel 13, React 19/Typ
 
 Use one deployable Laravel application and one PostgreSQL database with cohesive domain modules. React/Inertia delivers server-authorized pages from the same application. Use PostgreSQL transactions for financial and stock consistency. Add Redis queues/cache for asynchronous work; a queue job is never the sole protection for an integrity constraint. Keep ledger writes, balance updates, audit, and idempotency atomic in the command transaction; dispatch external notifications/exports only after commit using a transactional outbox where delivery guarantees matter.
 
-| Area | Choice and purpose |
-|---|---|
-| HTTP boundary | Thin Laravel controllers + Form Requests + Policies; no business rules embedded in React |
-| Application logic | Single-purpose actions/services for submit, decide, approve order, receive, reserve, issue, post expenditure, reconcile count |
-| Persistence | Eloquent aggregates and explicit repository/query objects when useful; constraints and row locks as final integrity boundary |
-| Read models | Scoped queries for dashboard/reports; stock/budget summaries reconcile to authoritative ledgers |
-| Approvals | Versioned workflow definitions and immutable run/decision records; server-enforced sequence and authority |
-| Stock | Append-only movements with signed position entries; locked materialized balances for fast availability |
-| Finance | Append-only budget/commitment/expenditure entries and explicit allocation links |
-| Documents | Private storage, metadata and authorization; malware quarantine when available; authenticated downloads |
-| Notifications | Laravel notifications/events with queued delivery after commit; configurable email provider |
-| Spreadsheets | Laravel Excel after compatibility verification; queued bounded import/export with validation preview |
-| PDF | Select maintained library after checking Laravel 13/PHP compatibility; headless rendering must sandbox untrusted HTML and remote resource access |
-| Analytics | Recharts from real scoped queries; no seeded/demo numbers in production dashboard |
-| Tests | Pest backend; Vitest component/formatting behavior; Playwright integrated workflows; PostgreSQL concurrency tests |
+| Area              | Choice and purpose                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| HTTP boundary     | Thin Laravel controllers + Form Requests + Policies; no business rules embedded in React                                                         |
+| Application logic | Single-purpose actions/services for submit, decide, approve order, receive, reserve, issue, post expenditure, reconcile count                    |
+| Persistence       | Eloquent aggregates and explicit repository/query objects when useful; constraints and row locks as final integrity boundary                     |
+| Read models       | Scoped queries for dashboard/reports; stock/budget summaries reconcile to authoritative ledgers                                                  |
+| Approvals         | Versioned workflow definitions and immutable run/decision records; server-enforced sequence and authority                                        |
+| Stock             | Append-only movements with signed position entries; locked materialized balances for fast availability                                           |
+| Finance           | Append-only budget/commitment/expenditure entries and explicit allocation links                                                                  |
+| Documents         | Private storage, metadata and authorization; malware quarantine when available; authenticated downloads                                          |
+| Notifications     | Laravel notifications/events with queued delivery after commit; configurable email provider                                                      |
+| Spreadsheets      | Laravel Excel after compatibility verification; queued bounded import/export with validation preview                                             |
+| PDF               | Select maintained library after checking Laravel 13/PHP compatibility; headless rendering must sandbox untrusted HTML and remote resource access |
+| Analytics         | Recharts from real scoped queries; no seeded/demo numbers in production dashboard                                                                |
+| Tests             | Pest backend; Vitest component/formatting behavior; Playwright integrated workflows; PostgreSQL concurrency tests                                |
 
 ## Alternatives considered
 
-| Option | Complexity | Operating cost | Consistency | Fit |
-|---|---|---|---|---|
-| Modular monolith (selected) | Moderate, clear boundaries | One app + database + optional Redis workers | One atomic database transaction | Practical for initial scale and team |
-| Microservices per module | High; deployment and distributed contracts | Multiple services, transport, tracing, recovery | Distributed settlement/reconciliation needed | Adds failure modes without demonstrated scale need |
-| Independent SPA and public API first | Moderate/high; separate auth and deployment | Separate frontend delivery | Still possible, more duplicate validation/contract work | Less practical than requested Inertia integration initially |
-| Generic inventory CRUD | Low initially | Low initially | Mutable balances and missing financial states | Cannot satisfy traceability or approval rules |
+| Option                               | Complexity                                  | Operating cost                                  | Consistency                                             | Fit                                                         |
+| ------------------------------------ | ------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------- |
+| Modular monolith (selected)          | Moderate, clear boundaries                  | One app + database + optional Redis workers     | One atomic database transaction                         | Practical for initial scale and team                        |
+| Microservices per module             | High; deployment and distributed contracts  | Multiple services, transport, tracing, recovery | Distributed settlement/reconciliation needed            | Adds failure modes without demonstrated scale need          |
+| Independent SPA and public API first | Moderate/high; separate auth and deployment | Separate frontend delivery                      | Still possible, more duplicate validation/contract work | Less practical than requested Inertia integration initially |
+| Generic inventory CRUD               | Low initially                               | Low initially                                   | Mutable balances and missing financial states           | Cannot satisfy traceability or approval rules               |
 
 ## Component and data flow
 

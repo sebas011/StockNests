@@ -26,10 +26,44 @@ $launcherLock = $null
 $state = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
 
-function Write-PlainFile([string] $Path, [string] $Content) {
+function Protect-PortablePath([string] $Path, [switch] $Directory) {
+    # Use SIDs rather than translated account names (which vary by Windows
+    # language). Data remains readable by the owning Windows account and the
+    # computer's administrators/system, never by all local Windows users.
+    $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    # Read the existing descriptor so Windows PowerShell 5.1 changes only its
+    # DACL. A fresh FileSecurity descriptor can attempt to change auditing too,
+    # which requires SeSecurityPrivilege and would break ordinary user accounts.
+    $acl = Get-Acl -LiteralPath $Path
+    if ($Directory) {
+        $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    } else {
+        $inheritance = [Security.AccessControl.InheritanceFlags]::None
+    }
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))) { $acl.RemoveAccessRuleSpecific($rule) }
+    foreach ($sid in @($owner, (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')), (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+        $acl.SetAccessRule($rule)
+    }
+    try {
+        if ($Directory) { $accessOnly = New-Object Security.AccessControl.DirectorySecurity }
+        else { $accessOnly = New-Object Security.AccessControl.FileSecurity }
+        $accessOnly.SetSecurityDescriptorSddlForm($acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access), [Security.AccessControl.AccessControlSections]::Access)
+        if ($Directory) { [IO.Directory]::SetAccessControl($Path, $accessOnly) }
+        else { [IO.File]::SetAccessControl($Path, $accessOnly) }
+        if (-not (Get-Acl -LiteralPath $Path).AreAccessRulesProtected) { throw 'Permission inheritance was not disabled.' }
+    } catch {
+        throw (New-Object InvalidOperationException('StockNest cannot protect its private data. Extract the stopped-folder ZIP into an NTFS folder owned by your Windows account. See the portable guide for moving to another PC.', $_.Exception))
+    }
+}
+
+function Write-PlainFile([string] $Path, [string] $Content, [switch] $Private) {
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     [IO.File]::WriteAllText($temporary, $Content, $script:utf8)
+    if ($Private) { Protect-PortablePath $temporary }
     Move-Item -LiteralPath $temporary -Destination $Path -Force
+    if ($Private) { Protect-PortablePath $Path }
 }
 
 function New-RandomSecret([int] $Bytes = 32) {
@@ -261,8 +295,12 @@ function Get-AvailablePort([int] $Preferred, [int] $Avoid = 0) {
 }
 
 function Update-Environment {
+    Protect-PortablePath $script:dataRoot -Directory
     $contents = ''
-    if (Test-Path -LiteralPath $script:environmentPath -PathType Leaf) { $contents = [IO.File]::ReadAllText($script:environmentPath) }
+    if (Test-Path -LiteralPath $script:environmentPath -PathType Leaf) {
+        Protect-PortablePath $script:environmentPath
+        $contents = [IO.File]::ReadAllText($script:environmentPath)
+    }
     if ($contents.Length -gt 0 -and -not $contents.EndsWith("`n")) { $contents += "`r`n" }
     $keyMatch = [regex]::Match($contents, '(?m)^APP_KEY=(?:"?)(base64:[A-Za-z0-9+/=]+)(?:"?)\s*$')
     if ($keyMatch.Success) { $key = $keyMatch.Groups[1].Value }
@@ -270,6 +308,7 @@ function Update-Environment {
         throw 'The existing data\.env APP_KEY is not a supported key. Keep it and check the installation instructions.'
     } else { $key = 'base64:' + [Convert]::ToBase64String((New-RandomSecret 32)) }
     if (Test-Path -LiteralPath $script:passwordPath -PathType Leaf) {
+        Protect-PortablePath $script:passwordPath
         $password = [IO.File]::ReadAllText($script:passwordPath).Trim()
         if ($password -notmatch '^[a-f0-9]{64}$') { throw 'The saved database password is invalid. Keep the data folder and restore it from your backup.' }
     } else {
@@ -277,7 +316,7 @@ function Update-Environment {
             throw 'The database password file is missing. Keep the data folder and restore .postgres-password from your backup.'
         }
         $password = -join ((New-RandomSecret 32) | ForEach-Object { $_.ToString('x2') })
-        Write-PlainFile $script:passwordPath ($password + "`r`n")
+        Write-PlainFile $script:passwordPath ($password + "`r`n") -Private
     }
     $settings = [ordered] @{
         APP_NAME = 'StockNest'; APP_ENV = 'production'; APP_KEY = $key; APP_DEBUG = 'false'
@@ -299,7 +338,7 @@ function Update-Environment {
         [Environment]::SetEnvironmentVariable($entry.Key, [string] $entry.Value, 'Process')
     }
     if (-not [regex]::IsMatch($contents, '(?m)^STOCKNEST_ORGANIZATION=')) { $contents += "STOCKNEST_ORGANIZATION=StockNest`r`n" }
-    Write-PlainFile $script:environmentPath $contents
+    Write-PlainFile $script:environmentPath $contents -Private
     $env:PGPASSWORD = $password
     $env:PGSSLMODE = 'disable'
     $env:STOCKNEST_DATA_DIR = $script:dataRoot
@@ -375,9 +414,9 @@ function Wait-ForWeb {
 
 try {
     if (-not [Environment]::Is64BitOperatingSystem) { throw 'This portable package needs 64-bit Windows 10 or 11.' }
-    foreach ($directory in @($dataRoot, $logRoot)) {
-        [IO.Directory]::CreateDirectory($directory) | Out-Null
-    }
+    [IO.Directory]::CreateDirectory($dataRoot) | Out-Null
+    Protect-PortablePath $dataRoot -Directory
+    [IO.Directory]::CreateDirectory($logRoot) | Out-Null
     for ($attempt = 0; $attempt -lt 180; $attempt++) {
         try {
             $launcherLock = [IO.File]::Open((Join-Path $dataRoot 'launcher.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)

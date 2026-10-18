@@ -12,30 +12,30 @@ Approving a projection, item request, or purchase order never posts inventory. A
 
 ## Confirmed requirements and configurable assumptions
 
-| Decision | Initial rule | Confirmation or configuration needed |
-|---|---|---|
-| Product name | StockNest | Organization display name is configurable and remains unspecified |
-| Funding sources | GAA and APPCSE, separate records | Do not expand acronyms or infer legal accounting rules |
-| Currency/timezone | PHP; Asia/Manila | Organization-level formatting and timezone configuration; one base currency initially |
-| Fiscal year | Calendar year, explicitly opened/closed | Confirm actual fiscal calendar before opening production year |
-| Self approval | Denied by default for every approval stage | Any exception needs an explicitly authorized, scoped, effective-dated policy, reason, and audit entry |
-| Review chain | Department Head then Fund Approver for monthly requests | Authority amounts, delegates, quorum, substitute approvers, and exception routes must be configured |
-| Projection authorization | Approval establishes plan only | A separate authorized allocation is required by default |
-| Commitment timing | Approved purchase order creates budget commitment | Request estimates are informational; they do not reserve budget |
-| Actual expenditure | Explicit posted expenditure, normally the recognized paid amount | Confirm organization's recognition policy before production; receipt and PO approval alone never imply spend |
-| Budget control | Hard limit by fund/fiscal year by default | Soft warning, authorized override, and exceptional route are configurable and audited |
-| Unplanned item | Allowed through explicit exception approval | Reason required; approved projection is never silently expanded |
-| Ownership | Each inventory balance belongs to one fund | Issue only stock owned by the request fund; same location may contain both funds |
-| Fund transfer | Not supported initially | Add an explicit approved transfer process before allowing reattribution |
-| Quantity precision | Four decimal places | Units requiring integers get an additional whole-number validation rule |
-| Monetary precision | Four decimal places in storage; two for displayed PHP totals | Agree rounding, taxes, discounts, freight, and invoice allocation rules before procurement rollout |
-| Reservations | Reserve approved requests explicitly | Reservations reduce availability, not on-hand; reservation expiry/release rules configurable |
-| Physical count | Monthly snapshot by location, item, and fund ownership | Cutoff is recorded; counting instructions reconcile movements during observation |
-| Costing | Proposed moving weighted-average per item/fund/location | Confirm accounting valuation method before inventory valuation is released; no retroactive silent revaluation |
-| Approval changes | Snapshot workflow and authority rules on submission | New configuration applies to new submissions; existing runs need explicit audited migration |
-| Fiscal carry-forward | Carry stock only with reviewed opening/closing reconciliation | Unused budget does not carry forward automatically |
-| Two-factor authentication | Available, strongly recommended for elevated roles | Decide mandatory roles and recovery policy before production |
-| Retention | No ordinary user deletion of posted/audited records | Define legal retention duration, archival policy, and recovery objectives with business owner |
+| Decision                  | Initial rule                                                     | Confirmation or configuration needed                                                                          |
+| ------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Product name              | StockNest                                                        | Organization display name is configurable and remains unspecified                                             |
+| Funding sources           | GAA and APPCSE, separate records                                 | Do not expand acronyms or infer legal accounting rules                                                        |
+| Currency/timezone         | PHP; Asia/Manila                                                 | Organization-level formatting and timezone configuration; one base currency initially                         |
+| Fiscal year               | Calendar year, explicitly opened/closed                          | Confirm actual fiscal calendar before opening production year                                                 |
+| Self approval             | Denied by default for every approval stage                       | Any exception needs an explicitly authorized, scoped, effective-dated policy, reason, and audit entry         |
+| Review chain              | Department Head then Fund Approver for monthly requests          | Authority amounts, delegates, quorum, substitute approvers, and exception routes must be configured           |
+| Projection authorization  | Approval establishes plan only                                   | A separate authorized allocation is required by default                                                       |
+| Commitment timing         | Approved purchase order creates budget commitment                | Request estimates are informational; they do not reserve budget                                               |
+| Actual expenditure        | Explicit posted expenditure, normally the recognized paid amount | Confirm organization's recognition policy before production; receipt and PO approval alone never imply spend  |
+| Budget control            | Hard limit by fund/fiscal year by default                        | Soft warning, authorized override, and exceptional route are configurable and audited                         |
+| Unplanned item            | Allowed through explicit exception approval                      | Reason required; approved projection is never silently expanded                                               |
+| Ownership                 | Each inventory balance belongs to one fund                       | Issue only stock owned by the request fund; same location may contain both funds                              |
+| Fund transfer             | Not supported initially                                          | Add an explicit approved transfer process before allowing reattribution                                       |
+| Quantity precision        | Four decimal places                                              | Units requiring integers get an additional whole-number validation rule                                       |
+| Monetary precision        | Four decimal places in storage; two for displayed PHP totals     | Agree rounding, taxes, discounts, freight, and invoice allocation rules before procurement rollout            |
+| Reservations              | Reserve approved requests explicitly                             | Reservations reduce availability, not on-hand; reservation expiry/release rules configurable                  |
+| Physical count            | Monthly snapshot by location, item, and fund ownership           | Cutoff is recorded; counting instructions reconcile movements during observation                              |
+| Costing                   | Proposed moving weighted-average per item/fund/location          | Confirm accounting valuation method before inventory valuation is released; no retroactive silent revaluation |
+| Approval changes          | Snapshot workflow and authority rules on submission              | New configuration applies to new submissions; existing runs need explicit audited migration                   |
+| Fiscal carry-forward      | Carry stock only with reviewed opening/closing reconciliation    | Unused budget does not carry forward automatically                                                            |
+| Two-factor authentication | Available, strongly recommended for elevated roles               | Decide mandatory roles and recovery policy before production                                                  |
+| Retention                 | No ordinary user deletion of posted/audited records              | Define legal retention duration, archival policy, and recovery objectives with business owner                 |
 
 The initial defaults are visible configuration, not irreversible business policy. Before live use, the organization must confirm its real approval authorities, fiscal calendar, allocation amounts, financial recognition policy, and opening stock ownership.
 
@@ -84,22 +84,22 @@ Review open orders, commitments, requests, counts, receipts, expenditures, and s
 
 ## Module dependencies
 
-| Module | Required scope | Dependencies |
-|---|---|---|
-| A Authentication/access | Users, roles, scopes, sessions, optional 2FA, login activity | Foundation |
-| B Funding sources | Configurable GAA/APPCSE, approver assignment, accounting references | A, O |
-| C Annual projections | Versioned fund/department plans, imports, approvals, comparisons | A, B, E, O, M, N |
-| D Budget/amendments | Separate allocation/plan/commitment/spend, amendments, enforcement | B, C, M, N |
-| E Catalog | Shared items, categories, UOM, supplier/location references, import/export | A, O |
-| F Monthly requests | Multi-line requisitions, approval chains, approved changes, unplanned routes | A–E, M, N |
-| G Procurement | Procurement requisitions, suppliers, PO approval, partial receipts, spend | D, E, F, M, N |
-| H Inventory | Ledger, owned balances/lots, receipt/return/transfer/adjustment, reservations | B, E, G, N |
-| I Issuance | Approved queue, reserve/pick/confirm, recipient acknowledgment, returns | F, H, N |
-| J Physical counts | Cutoff snapshot, sheets, recounts, discrepancy approval, adjustment | H, M, N |
-| K Analytics | Role-scoped operational and financial dashboards | D, F–J, N |
-| L Reports | Nineteen reports, scoped filters, CSV/XLSX/PDF generation | C–K, N |
-| M Approval/notifications | Versioned workflows, ordered decisions, in-app/email, action inbox | A, O; shared infrastructure begins in Phase 2 |
-| N Audit | Append-only actor/object/before/after/reason history and archives | A; shared infrastructure begins in Phase 2 |
-| O Administration | Organization, fiscal years, scopes, settings, closing, thresholds | A, B; grows with each module |
+| Module                   | Required scope                                                                | Dependencies                                  |
+| ------------------------ | ----------------------------------------------------------------------------- | --------------------------------------------- |
+| A Authentication/access  | Users, roles, scopes, sessions, optional 2FA, login activity                  | Foundation                                    |
+| B Funding sources        | Configurable GAA/APPCSE, approver assignment, accounting references           | A, O                                          |
+| C Annual projections     | Versioned fund/department plans, imports, approvals, comparisons              | A, B, E, O, M, N                              |
+| D Budget/amendments      | Separate allocation/plan/commitment/spend, amendments, enforcement            | B, C, M, N                                    |
+| E Catalog                | Shared items, categories, UOM, supplier/location references, import/export    | A, O                                          |
+| F Monthly requests       | Multi-line requisitions, approval chains, approved changes, unplanned routes  | A–E, M, N                                     |
+| G Procurement            | Procurement requisitions, suppliers, PO approval, partial receipts, spend     | D, E, F, M, N                                 |
+| H Inventory              | Ledger, owned balances/lots, receipt/return/transfer/adjustment, reservations | B, E, G, N                                    |
+| I Issuance               | Approved queue, reserve/pick/confirm, recipient acknowledgment, returns       | F, H, N                                       |
+| J Physical counts        | Cutoff snapshot, sheets, recounts, discrepancy approval, adjustment           | H, M, N                                       |
+| K Analytics              | Role-scoped operational and financial dashboards                              | D, F–J, N                                     |
+| L Reports                | Nineteen reports, scoped filters, CSV/XLSX/PDF generation                     | C–K, N                                        |
+| M Approval/notifications | Versioned workflows, ordered decisions, in-app/email, action inbox            | A, O; shared infrastructure begins in Phase 2 |
+| N Audit                  | Append-only actor/object/before/after/reason history and archives             | A; shared infrastructure begins in Phase 2    |
+| O Administration         | Organization, fiscal years, scopes, settings, closing, thresholds             | A, B; grows with each module                  |
 
 Shared approval and audit capabilities are built early to avoid retrofitting uncontrolled approvals into later phases. Modules remain in one application and database.

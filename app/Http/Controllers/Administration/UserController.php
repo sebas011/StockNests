@@ -7,13 +7,19 @@ use App\Http\Requests\Administration\UserAccessRequest;
 use App\Models\Department;
 use App\Models\FundingSource;
 use App\Models\User;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
+use Inertia\Response;
 use Spatie\Permission\Models\Role;
 
+/**
+ * @phpstan-type AccessData array{department_id: int|numeric-string, role: string, fund_ids: list<int|numeric-string>, is_active?: bool|int|string, reason: string, name?: string, email?: string, password?: string, idempotency_key: string}
+ */
 class UserController extends Controller
 {
     private function authorizeActor(Request $request): User
@@ -23,7 +29,7 @@ class UserController extends Controller
         return $request->user();
     }
 
-    public function index(Request $request)
+    public function index(Request $request): Response
     {
         $actor = $this->authorizeActor($request);
         $fundIds = $actor->fundingSources()->pluck('funding_sources.id');
@@ -33,7 +39,7 @@ class UserController extends Controller
             ['name' => 'email', 'label' => 'Email address', 'type' => 'email', 'required' => true],
             ['name' => 'password', 'label' => 'Initial password', 'type' => 'password', 'required' => true, 'description' => '12+ characters, with upper and lower case, a number and a symbol.'],
             ['name' => 'department_id', 'label' => 'Department', 'type' => 'select', 'required' => true, 'options' => Department::where('is_active', true)->get()->map(fn ($d) => ['value' => (string) $d->id, 'label' => $d->name])],
-            ['name' => 'role', 'label' => 'Role', 'type' => 'select', 'required' => true, 'options' => Role::where('guard_name', 'web')->get()->map(fn ($r) => ['value' => $r->name, 'label' => $r->name])],
+            ['name' => 'role', 'label' => 'Role', 'type' => 'select', 'required' => true, 'options' => Role::where('guard_name', 'web')->when(! $actor->hasRole('Super Administrator'), fn ($q) => $q->where('name', '<>', 'Super Administrator'))->get()->map(fn ($r) => ['value' => $r->name, 'label' => $r->name])],
             ['name' => 'fund_id', 'label' => 'Initial funding source', 'type' => 'select', 'required' => true, 'options' => $funds->map(fn ($f) => ['value' => (string) $f['id'], 'label' => $f['label']])],
             ['name' => 'reason', 'label' => 'Reason for access', 'type' => 'textarea', 'required' => true],
         ];
@@ -62,36 +68,40 @@ class UserController extends Controller
             'page' => ['key' => 'administration', 'title' => 'People & access', 'subtitle' => 'Manage accounts, roles and funding source access.', 'columns' => collect(['name' => 'Name', 'email' => 'Email', 'role' => 'Role', 'department' => 'Department', 'funds' => 'Funding sources', 'status' => 'Status'])->map(fn ($label, $key) => ['key' => $key, 'label' => $label, 'format' => $key === 'status' ? 'status' : 'text'])->values(), 'rows' => $rows, 'pagination' => ['current_page' => $users->currentPage(), 'last_page' => $users->lastPage(), 'total' => $users->total(), 'prev_page_url' => $users->previousPageUrl(), 'next_page_url' => $users->nextPageUrl()]],
             'funds' => $funds, 'filters' => $request->only('q'),
             'createForm' => ['title' => 'Create account', 'action' => '/administration/users', 'fields' => $fields],
-            'pageActions' => $actor->can('roles.manage') && FundingSource::pluck('id')->diff($actor->fundingSources()->pluck('funding_sources.id'))->isEmpty() ? [['label' => 'Role permissions', 'form' => ['title' => 'Configure a role', 'action' => '/administration/roles', 'fields' => [
+            'pageActions' => $actor->can('roles.manage') && $this->hasAllFunds($actor) ? [['label' => 'Role permissions', 'form' => ['title' => 'Configure a role', 'action' => '/administration/roles', 'fields' => [
                 ['name' => 'name', 'label' => 'Role name', 'type' => 'text', 'required' => true],
-                ['name' => 'permissions', 'label' => 'Permission names, separated by commas', 'type' => 'textarea', 'required' => true, 'description' => $actor->getAllPermissions()->pluck('name')->join(', ')],
+                ['name' => 'permissions', 'label' => 'Permissions', 'type' => 'multiselect', 'required' => true, 'options' => $actor->getAllPermissions()->sortBy('name')->map(fn ($p) => ['value' => $p->name, 'label' => $p->name])->values()->all()],
                 ['name' => 'reason', 'label' => 'Reason', 'type' => 'textarea', 'required' => true],
             ]]]] : [],
         ]);
     }
 
+    /** @return AccessData */
     private function accessData(UserAccessRequest $request): array
     {
         // Form metadata uses a simple select; server still validates the final array.
-        return $request->validated();
+        /** @var AccessData $data Validated by UserAccessRequest before use. */
+        $data = $request->validated();
+
+        return $data;
     }
 
-    public function store(UserAccessRequest $request)
+    public function store(UserAccessRequest $request): RedirectResponse
     {
         $data = $this->accessData($request);
         $this->checkGrants($request->user(), $data);
         DB::transaction(function () use ($data, $request) {
             $user = User::create(collect($data)->only('name', 'email', 'password')->all());
-            $user->forceFill(['department_id' => $data['department_id'], 'is_active' => true, 'email_verified_at' => now()])->save();
+            $user->forceFill(['department_id' => $data['department_id'], 'is_active' => true, 'email_verified_at' => now(), 'must_change_password' => true])->save();
             $user->assignRole($data['role']);
             $user->fundingSources()->sync($data['fund_ids']);
             $this->audit($request->user(), $user, 'user.created', [], $data['reason']);
         });
 
-        return back()->with('success', 'Account created. Share the initial password securely and ask the user to change it.');
+        return back()->with('success', 'Account created. Share the initial password securely. The user must replace it before using StockNest.');
     }
 
-    public function access(UserAccessRequest $request, User $user)
+    public function access(UserAccessRequest $request, User $user): RedirectResponse
     {
         $data = $this->accessData($request);
         $actor = $request->user();
@@ -100,10 +110,11 @@ class UserController extends Controller
         if ($actor->id === $user->id) {
             throw ValidationException::withMessages(['workflow' => 'Ask another administrator to change your own access.']);
         }
-        DB::transaction(function () use ($actor, $user, $data) {
+        $active = $request->boolean('is_active');
+        DB::transaction(function () use ($actor, $user, $data, $active) {
             $user = User::whereKey($user->id)->lockForUpdate()->firstOrFail();
             $before = $this->snapshot($user);
-            $user->forceFill(['department_id' => $data['department_id'], 'is_active' => $data['is_active'] ?? true, 'remember_token' => Str::random(60)])->save();
+            $user->forceFill(['department_id' => $data['department_id'], 'is_active' => $active, 'remember_token' => Str::random(60)])->save();
             $user->syncRoles([$data['role']]);
             $user->fundingSources()->sync($data['fund_ids']);
             DB::table('sessions')->where('user_id', $user->id)->delete();
@@ -113,7 +124,7 @@ class UserController extends Controller
         return back()->with('success', 'Access updated and existing sessions ended.');
     }
 
-    public function revokeSessions(Request $request, User $user)
+    public function revokeSessions(Request $request, User $user): RedirectResponse
     {
         $actor = $this->authorizeActor($request);
         $this->checkTarget($actor, $user);
@@ -126,15 +137,33 @@ class UserController extends Controller
         return back()->with('success', 'Sessions ended.');
     }
 
-    public function role(Request $request)
+    public function role(Request $request): RedirectResponse
     {
         $actor = $this->authorizeActor($request);
         // Roles are global. A fund-limited administrator may not change a role
         // that also controls users outside their own funding source scope.
         abort_unless($actor->can('roles.manage'), 403);
-        abort_unless(FundingSource::pluck('id')->diff($actor->fundingSources()->pluck('funding_sources.id'))->isEmpty(), 403);
-        $data = $request->validate(['name' => 'required|string|max:100', 'permissions' => 'required|string|max:2000', 'reason' => 'required|string|min:5|max:2000']);
-        $permissions = array_values(array_filter(array_map('trim', explode(',', $data['permissions']))));
+        abort_unless($this->hasAllFunds($actor), 403);
+        // Continue accepting the existing comma-separated API representation.
+        if (is_string($request->input('permissions'))) {
+            $request->merge(['permissions' => array_values(array_filter(array_map('trim', explode(',', $request->input('permissions')))))]);
+        }
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'permissions' => ['required', 'array', 'min:1', 'max:100'],
+            'permissions.*' => ['required', 'string', 'distinct', Rule::exists('permissions', 'name')->where('guard_name', 'web')],
+            'reason' => ['required', 'string', 'min:5', 'max:2000'],
+        ]);
+        $data['name'] = trim($data['name']);
+        $protectedName = collect(['Super Administrator', 'System Administrator'])->first(fn ($name) => mb_strtolower($name) === mb_strtolower($data['name']));
+        if ($protectedName !== null) {
+            abort_unless($actor->hasRole('Super Administrator'), 403);
+            if ($data['name'] !== $protectedName) {
+                throw ValidationException::withMessages(['name' => 'Use the existing administrator role name exactly.']);
+            }
+        }
+        /** @var list<string> $permissions Validated known permission names above. */
+        $permissions = array_values($data['permissions']);
         abort_unless(collect($permissions)->diff($actor->getAllPermissions()->pluck('name'))->isEmpty(), 403);
         // Prevent changing a role assigned to the acting administrator.
         abort_if($actor->hasRole($data['name']), 422, 'Another administrator must change your role.');
@@ -149,8 +178,10 @@ class UserController extends Controller
         return back()->with('success', 'Role permissions saved.');
     }
 
+    /** @param AccessData $data */
     private function checkGrants(User $actor, array $data): void
     {
+        abort_if($data['role'] === 'Super Administrator' && ! $actor->hasRole('Super Administrator'), 403);
         abort_unless(collect($data['fund_ids'])->diff($actor->fundingSources()->pluck('funding_sources.id'))->isEmpty(), 403);
         $role = Role::findByName($data['role'], 'web');
         abort_unless($role->permissions->pluck('name')->diff($actor->getAllPermissions()->pluck('name'))->isEmpty(), 403);
@@ -158,14 +189,22 @@ class UserController extends Controller
 
     private function checkTarget(User $actor, User $target): void
     {
-        abort_unless($target->fundingSources()->pluck('funding_sources.id')->diff($actor->fundingSources()->pluck('funding_sources.id'))->isEmpty(), 403);
+        abort_if($target->hasRole('Super Administrator') && ! $actor->hasRole('Super Administrator'), 403);
+        abort_if($target->fundingSources()->whereNotIn('funding_sources.id', $actor->fundingSources()->select('funding_sources.id'))->exists(), 403);
     }
 
+    private function hasAllFunds(User $user): bool
+    {
+        return FundingSource::whereNotIn('id', $user->fundingSources()->select('funding_sources.id'))->doesntExist();
+    }
+
+    /** @return array<string, mixed> */
     private function snapshot(User $user): array
     {
         return ['email' => $user->email, 'is_active' => $user->is_active, 'department_id' => $user->department_id, 'roles' => $user->roles->pluck('name')->all(), 'fund_ids' => $user->fundingSources()->pluck('funding_sources.id')->all()];
     }
 
+    /** @param array<string, mixed> $before */
     private function audit(User $actor, User $user, string $action, array $before, string $reason): void
     {
         DB::table('audit_logs')->insert(['user_id' => $actor->id, 'action' => $action, 'subject_type' => 'user', 'subject_id' => $user->id, 'before_values' => json_encode($before), 'after_values' => json_encode($this->snapshot($user)), 'reason' => $reason, 'created_at' => now()]);

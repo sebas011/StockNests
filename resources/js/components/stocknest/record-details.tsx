@@ -19,13 +19,13 @@ export function Status({ value }: { value: unknown }) {
     return (
         <span className={`sn-status sn-status-${statusTone(value)}`}>
             <span aria-hidden="true" />
-            {humanize(String(value ?? 'Unknown'))}
+            {humanize(formatValue(value ?? 'Unknown'))}
         </span>
     );
 }
 
 function detailFormat(key: string): string {
-    if (/(?:^|_)(date|at)$/.test(key) || /_date$/.test(key)) return 'date';
+    if (/(?:^|_)(date|at)$/.test(key) || key.endsWith('_date')) return 'date';
     if (
         /price|cost|amount|allocation|committed|spent|available_budget|balance_amount|expenditure/.test(
             key,
@@ -51,7 +51,7 @@ function Scalar({
     currency: string;
     timezone: string;
 }) {
-    if (/status$/.test(name)) return <Status value={value} />;
+    if (name.endsWith('status')) return <Status value={value} />;
     if (
         name === 'href' &&
         typeof value === 'string' &&
@@ -261,7 +261,7 @@ export function RecordDetails({
                                     <li
                                         key={step}
                                         aria-current={
-                                            String(status ?? '')
+                                            formatValue(status ?? '')
                                                 .toLowerCase()
                                                 .replaceAll('_', ' ') ===
                                             step.toLowerCase()

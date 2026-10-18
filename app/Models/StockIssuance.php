@@ -12,16 +12,19 @@ class StockIssuance extends DomainModel
 {
     public $timestamps = false;
 
+    /** @return BelongsTo<ItemRequest, $this> */
     public function request(): BelongsTo
     {
         return $this->belongsTo(ItemRequest::class, 'item_request_id');
     }
 
+    /** @return BelongsTo<Warehouse, $this> */
     public function warehouse(): BelongsTo
     {
         return $this->belongsTo(Warehouse::class);
     }
 
+    /** @return HasMany<StockIssuanceLine, $this> */
     public function lines(): HasMany
     {
         return $this->hasMany(StockIssuanceLine::class);

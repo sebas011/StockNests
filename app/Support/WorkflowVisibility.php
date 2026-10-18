@@ -16,6 +16,7 @@ use App\Models\User;
 
 final class WorkflowVisibility
 {
+    /** @param array<string, mixed> $data */
     public static function canSee(User $user, array $data): bool
     {
         $fund = (int) ($data['funding_source_id'] ?? 0);
@@ -24,17 +25,18 @@ final class WorkflowVisibility
         }
         $type = $data['record_type'] ?? '';
         $allowed = [AnnualProjection::class, BudgetAdjustment::class, GoodsReceipt::class, InventoryCount::class, ItemRequest::class, PurchaseOrder::class, StockBalance::class, StockIssuance::class, StockReservation::class];
-        if (! in_array($type, $allowed, true)) {
+        $recordId = filter_var($data['record_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (! is_string($type) || ! in_array($type, $allowed, true) || $recordId === false) {
             return false;
         }
-        $record = $type::find($data['record_id'] ?? 0);
+        $record = $type::find($recordId);
         if (! $record) {
             return false;
         }
         $actualFund = match (true) {
             $record instanceof BudgetAdjustment => $record->allocation->funding_source_id,
             $record instanceof StockReservation => $record->balance->funding_source_id,
-            default => $record->funding_source_id,
+            default => $record->getAttribute('funding_source_id'),
         };
         if ((int) $actualFund !== $fund) {
             return false;
@@ -48,7 +50,7 @@ final class WorkflowVisibility
         $department = match (true) {
             $record instanceof GoodsReceipt => $record->order->department_id,
             $record instanceof StockIssuance => $record->request->department_id,
-            default => $record->department_id,
+            default => $record->getAttribute('department_id'),
         };
 
         return $department !== null && (int) $department === (int) $user->department_id && $user->can('dashboard.view');
@@ -56,7 +58,7 @@ final class WorkflowVisibility
 
     public static function destination(User $user, string $type): string
     {
-        if ($user->can('requests.approve')) {
+        if ($user->hasAnyPermission(['requests.approve', 'budget.approve', 'fund.approve', 'counts.approve'])) {
             return '/app/approvals';
         }
 

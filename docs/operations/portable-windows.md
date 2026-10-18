@@ -9,7 +9,7 @@ GitHub's **Code → Download ZIP** and automatic **Source code** archives contai
 ## First start
 
 1. Download the Windows release ZIP using the link above.
-2. Right-click the ZIP, choose **Extract All**, and extract the entire package to a short folder you can write to, such as `C:\Users\YourName\StockNest`. Avoid Program Files, network drives and folders synchronized by a cloud service. Do not open the launcher from inside the ZIP.
+2. Right-click the ZIP, choose **Extract All**, and extract the entire package to a short **NTFS** folder you own, such as `C:\Users\YourName\StockNest`. Avoid Program Files, FAT/exFAT drives, network drives and folders synchronized by a cloud service. Do not open the launcher from inside the ZIP.
 3. Open the extracted folder. It contains **Start StockNest.cmd**, **Stop StockNest.cmd**, **app/** and **runtime/**.
 4. Double-click **Start StockNest.cmd**. The first start initializes a fresh local database, applies the database structure and creates the GAA/APPCSE reference records. It may take a few minutes. Services run in the background; the launcher displays the ready address and can then close.
 5. Your browser opens the **/setup** page. Create your administrator account with your own name, email and a unique password. No shared default password is supplied. Setup signs you in automatically and opens the dashboard.
@@ -32,6 +32,8 @@ The web application and database listen only on the local PC. Each downloaded co
 
 Keep **data/** with its StockNest installation. Never delete it to fix a startup problem, replace it with an empty folder, or upload it to GitHub. It contains your organization's private records and secrets.
 
+The launcher restricts the data folder and both private configuration files to the Windows account that runs StockNest, Windows administrators and SYSTEM. These permissions protect against other ordinary Windows accounts; they do not encrypt backups. Multiple named application accounts can still use this installation on the same PC.
+
 To make a consistent backup:
 
 1. Stop StockNest using **Stop StockNest.cmd** and wait for shutdown to finish.
@@ -40,7 +42,7 @@ To make a consistent backup:
 
 Copying database files while StockNest is running can produce an unusable backup. A full stopped-folder copy preserves the matching application, runtime, database and encryption key together.
 
-To move to another compatible Windows PC, stop the original installation, copy its entire folder, and open **Start StockNest.cmd** from the copied folder on the other PC. If both copies are later used, their records diverge; changes do not merge automatically. Test that you can sign in and see your records before retiring the original copy.
+To move to another compatible Windows PC, stop the original installation and compress its **entire folder, including data/** into a ZIP. Transfer that private ZIP, then extract it to an NTFS folder owned by the destination Windows account and open **Start StockNest.cmd**. A ZIP does not retain the original PC's Windows account permissions; the launcher applies the new account's private permissions on first start. Keep the ZIP private and delete transfer copies when no longer needed. If a direct folder copy reports access denied because it retained the old PC's account permissions, use this ZIP/extract process from the original account instead. An administrator can recover ownership if the original account is unavailable; do not remove or recreate the private configuration files. If both copies are later used, their records diverge; changes do not merge automatically. Test that you can sign in and see your records before retiring the original copy.
 
 ## Update an existing installation
 

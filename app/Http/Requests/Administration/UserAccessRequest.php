@@ -25,6 +25,7 @@ class UserAccessRequest extends FormRequest
         return (bool) $this->user()?->can('users.manage');
     }
 
+    /** @return array<string, array<int, mixed>> */
     public function rules(): array
     {
         $create = $this->is('administration/users');
@@ -37,7 +38,7 @@ class UserAccessRequest extends FormRequest
             'role' => ['required', 'string', Rule::exists('roles', 'name')->where('guard_name', 'web')],
             'fund_ids' => ['required', 'array', 'min:1'],
             'fund_ids.*' => ['required', 'integer', 'distinct', Rule::exists('funding_sources', 'id')->where('is_active', true)],
-            'is_active' => ['sometimes', 'boolean'],
+            'is_active' => [$create ? 'sometimes' : 'required', 'boolean'],
             'reason' => ['required', 'string', 'min:5', 'max:2000'],
             'idempotency_key' => ['required', 'uuid'],
         ];

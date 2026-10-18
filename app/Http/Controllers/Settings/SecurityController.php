@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Settings\PasswordUpdateRequest;
 use App\Http\Requests\Settings\TwoFactorAuthenticationRequest;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -42,6 +44,7 @@ class SecurityController extends Controller
                 : [],
             /* @end-chisel-passkeys */
             'passwordRules' => Password::defaults()->toPasswordRulesString(),
+            'mustChangePassword' => (bool) $request->user()->must_change_password,
         ];
 
         /* @chisel-2fa */
@@ -61,12 +64,17 @@ class SecurityController extends Controller
      */
     public function update(PasswordUpdateRequest $request): RedirectResponse
     {
-        $request->user()->update([
+        $requiredChange = $request->user()->must_change_password;
+        $request->user()->forceFill([
             'password' => $request->password,
-        ]);
+            'must_change_password' => false,
+            'remember_token' => Str::random(60),
+        ])->save();
+        DB::table('sessions')->where('user_id', $request->user()->id)->where('id', '<>', $request->session()->getId())->delete();
+        $request->session()->regenerate();
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Password updated.')]);
 
-        return back();
+        return $requiredChange ? to_route('dashboard') : back();
     }
 }

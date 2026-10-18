@@ -18,6 +18,18 @@ function Assert-True([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
 }
 
+function Assert-PrivatePath([string] $Path) {
+    $acl = Get-Acl -LiteralPath $Path
+    Assert-True $acl.AreAccessRulesProtected 'Private data still inherits permissions from its parent folder.'
+    $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    Assert-True ($rules.Count -gt 0) 'The private path has an empty access list.'
+    foreach ($rule in $rules) {
+        Assert-True ($allowed -contains $rule.IdentityReference.Value) 'Another Windows account can access portable private data.'
+        Assert-True (-not $rule.IsInherited) 'Private data has an inherited permission rule.'
+    }
+}
+
 $quoteCases = @(
     @('', '""'),
     @('simple-value', 'simple-value'),
@@ -69,7 +81,24 @@ try {
     Update-Environment
     $firstEnvironment = [IO.File]::ReadAllText($environmentPath)
     $firstPassword = [IO.File]::ReadAllText($passwordPath)
+    Assert-PrivatePath $dataRoot
+    Assert-PrivatePath $environmentPath
+    Assert-PrivatePath $passwordPath
+    # Simulate a pre-hardening file with an explicit broad access grant. A later
+    # launch must repair BOTH copies of the database credential, not just new files.
+    foreach ($path in @($environmentPath, $passwordPath)) {
+        $weakAcl = Get-Acl -LiteralPath $path
+        $weakAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier('S-1-1-0')), 'Read', 'Allow')))
+        # Change only the DACL on Windows PowerShell 5.1. Passing Get-Acl's
+        # complete descriptor to Set-Acl can require SeSecurityPrivilege even
+        # though this regression fixture is only adding an ordinary read grant.
+        $weakAccessOnly = New-Object Security.AccessControl.FileSecurity
+        $weakAccessOnly.SetSecurityDescriptorSddlForm($weakAcl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access), [Security.AccessControl.AccessControlSections]::Access)
+        [IO.File]::SetAccessControl($path, $weakAccessOnly)
+    }
     Update-Environment
+    Assert-PrivatePath $environmentPath
+    Assert-PrivatePath $passwordPath
     Assert-True ([IO.File]::ReadAllText($environmentPath) -ceq $firstEnvironment) 'Restart changed the environment or application key.'
     Assert-True ([IO.File]::ReadAllText($passwordPath) -ceq $firstPassword) 'Restart changed the database password.'
     Assert-True ($firstEnvironment.Contains('STOCKNEST_ORGANIZATION=Test office')) 'Organization settings were overwritten.'
@@ -92,7 +121,7 @@ try {
     if (-not $resolvedTemporary.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Temporary cleanup path is outside the test workspace.' }
     Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
 }
-Write-Host 'Launcher checks passed: syntax, Windows paths, occupied ports, persistent secrets and settings.'
+Write-Host 'Launcher checks passed: syntax, Windows paths, occupied ports, private credential ACLs and persistent settings.'
 
 if ([string]::IsNullOrWhiteSpace($ReleasePath)) { exit 0 }
 $release = [IO.Path]::GetFullPath($ReleasePath)

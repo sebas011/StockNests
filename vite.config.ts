@@ -18,9 +18,13 @@ export default defineConfig({
             presets: [reactCompilerPreset()],
         }),
         tailwindcss(),
-        ...(process.env.STOCKNEST_SKIP_WAYFINDER ? [] : [wayfinder({
-            formVariants: true,
-        })]),
+        ...(process.env.STOCKNEST_SKIP_WAYFINDER
+            ? []
+            : [
+                  wayfinder({
+                      formVariants: true,
+                  }),
+              ]),
     ]),
     server: {
         watch: {

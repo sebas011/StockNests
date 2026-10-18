@@ -3,6 +3,7 @@
 use App\Domain\WorkflowService;
 use App\Events\WorkflowChanged;
 use App\Models\AnnualProjection;
+use App\Models\ApprovalDecision;
 use App\Models\AuditLog;
 use App\Models\BudgetAllocation;
 use App\Models\Department;
@@ -17,6 +18,7 @@ use App\Models\PurchaseOrder;
 use App\Models\StockBalance;
 use App\Models\StockIssuance;
 use App\Models\StockMovement;
+use App\Models\StockReservation;
 use App\Models\StockTransfer;
 use App\Models\Supplier;
 use App\Models\UnitOfMeasure;
@@ -27,6 +29,8 @@ use Database\Seeders\DemoSeeder;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Database\Seeders\StockNestSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -105,7 +109,7 @@ function snRequest($test, string $qty = '50', bool $approve = true, ?FundingSour
     $record = snRun($test, 'requester', 'request.save', snScope($test, $fund) + ['required_on' => now()->addWeek()->format('Y-m-d'), 'purpose' => 'Monthly supplies', 'priority' => 'normal', 'lines' => [['item_id' => $test->item->id, 'quantity' => $qty, 'unit_price' => '10.00']]]);
     snRun($test, 'requester', 'request.submit', ['id' => $record['id']]);
     if ($approve) {
-        snRun($test, 'head', 'request.decide', ['id' => $record['id'], 'decision' => 'approved']);
+        snRun($test, 'head', 'request.decide', ['id' => $record['id'], 'decision' => 'approved', 'comment' => 'Department need and unplanned exception verified']);
         snRun($test, 'approver', 'request.decide', ['id' => $record['id'], 'decision' => 'approved', 'comment' => 'Unplanned exception / fund authority verified']);
     }
 
@@ -141,10 +145,12 @@ test('scenario 2 monthly requests remain pending through each level and approval
     expect($request->fresh()->status)->toBe('approved')->and(StockBalance::count())->toBe(0)->and(FinancialEntry::count())->toBe(0);
 });
 
-test('scenario 3 unplanned items require explicit fund approver exception comment', function () {
+test('scenario 3 unplanned items require an explicit exception comment at every approving stage', function () {
     $request = snRequest($this, '50', false);
     expect($request->is_unplanned)->toBeTrue();
-    snRun($this, 'head', 'request.decide', ['id' => $request->id, 'decision' => 'approved']);
+    expect(fn () => snRun($this, 'head', 'request.decide', ['id' => $request->id, 'decision' => 'approved']))->toThrow(ValidationException::class);
+    expect($request->fresh()->status)->toBe('submitted');
+    snRun($this, 'head', 'request.decide', ['id' => $request->id, 'decision' => 'approved', 'comment' => 'Unplanned department need justified']);
     expect(fn () => snRun($this, 'approver', 'request.decide', ['id' => $request->id, 'decision' => 'approved']))->toThrow(ValidationException::class);
     expect($request->fresh()->status)->toBe('pending_review');
 });
@@ -394,4 +400,166 @@ test('CSV export neutralizes a formula-like item name without corrupting numeric
     $lines = explode("\n", trim($response->streamedContent()));
     $row = str_getcsv($lines[1], ',', '"', '');
     expect($row[7])->toBe("'-1+2")->and($row[10])->toBe('1000.00');
+});
+
+test('a person holding both approval roles cannot decide successive stages in one cycle', function () {
+    $request = snRequest($this, '10', false);
+    $this->users['head']->assignRole('Fund Approver');
+    snRun($this, 'head', 'request.decide', ['id' => $request->id, 'decision' => 'approved', 'comment' => 'Department exception reviewed']);
+    foreach (['approved', 'returned'] as $decision) {
+        expect(fn () => snRun($this, 'head', 'request.decide', ['id' => $request->id, 'decision' => $decision, 'comment' => 'Attempt same reviewer']))->toThrow(ValidationException::class);
+    }
+    expect($request->fresh()->status)->toBe('pending_review')->and(ApprovalDecision::where('subject_type', ItemRequest::class)->count())->toBe(1);
+    snRun($this, 'approver', 'request.decide', ['id' => $request->id, 'decision' => 'approved', 'comment' => 'Independent fund review']);
+    expect($request->fresh()->status)->toBe('approved');
+});
+
+test('return and resubmission permit earlier reviewers to act in a new approval cycle', function () {
+    $request = snRequest($this, '10', false);
+    snRun($this, 'head', 'request.decide', ['id' => $request->id, 'decision' => 'approved', 'comment' => 'Department review']);
+    snRun($this, 'approver', 'request.decide', ['id' => $request->id, 'decision' => 'returned', 'comment' => 'Clarify purpose']);
+    snRun($this, 'requester', 'request.submit', ['id' => $request->id]);
+    snRun($this, 'head', 'request.decide', ['id' => $request->id, 'decision' => 'approved', 'comment' => 'Clarification reviewed']);
+    snRun($this, 'approver', 'request.decide', ['id' => $request->id, 'decision' => 'approved', 'comment' => 'Independent final review']);
+    expect($request->fresh()->status)->toBe('approved')->and(ApprovalDecision::where('subject_type', ItemRequest::class)->count())->toBe(4);
+});
+
+test('custom role holders can approve through explicit department fund and budget permissions', function () {
+    $custom = Role::create(['name' => 'Delegated approval authority', 'guard_name' => 'web']);
+    $custom->syncPermissions(['fund.approve', 'budget.approve']);
+    $this->users['approver']->syncRoles([$custom]);
+    snAllocate($this);
+    snPlan($this);
+    $custom->givePermissionTo(['requests.approve', 'requests.department-approve']);
+    $this->users['approver']->unsetRelation('permissions')->unsetRelation('roles');
+    $this->users['head']->syncRoles([$custom]);
+    $request = snRequest($this, '10');
+    $custom->revokePermissionTo('requests.approve');
+    $this->users['approver']->unsetRelation('permissions')->unsetRelation('roles');
+    $order = snOrder($this, $request, '10');
+    expect($request->status)->toBe('approved')->and($order->status)->toBe('ordered')
+        ->and($this->users['approver']->hasRole('Fund Approver'))->toBeFalse();
+});
+
+test('approval upgrade preserves removed grants and does not elevate custom roles', function () {
+    $new = ['fund.approve', 'budget.approve', 'requests.department-approve', 'fiscal.reopen'];
+    foreach (Role::all() as $role) {
+        $role->revokePermissionTo($new);
+    }
+    Role::findByName('Fund Approver')->revokePermissionTo('requests.approve');
+    Role::findByName('System Administrator')->revokePermissionTo('master-data.manage');
+    $custom = Role::create(['name' => 'Custom reviewer', 'guard_name' => 'web']);
+    $custom->givePermissionTo('requests.approve');
+    Schema::table('stock_transfers', fn ($table) => $table->dropColumn('effective_on'));
+    $upgrade = require database_path('migrations/2026_10_17_000400_audit_domain_controls.php');
+    $upgrade->up();
+    expect(Role::findByName('Department Head')->hasPermissionTo('requests.department-approve'))->toBeTrue()
+        ->and(Role::findByName('Fund Approver')->hasPermissionTo('fund.approve'))->toBeFalse()
+        ->and(Role::findByName('System Administrator')->hasPermissionTo('fiscal.reopen'))->toBeFalse()
+        ->and($custom->fresh()->hasPermissionTo('fund.approve'))->toBeFalse();
+});
+
+function snReservationFixture($test): array
+{
+    $request = snRequest($test, '10');
+    $destination = Warehouse::create(['code' => 'RESERVE-B', 'name' => 'Reservation location B']);
+    foreach ([$test->warehouse, $destination] as $warehouse) {
+        StockBalance::create(['funding_source_id' => $test->fund->id, 'warehouse_id' => $warehouse->id, 'item_id' => $test->item->id, 'quantity' => '20']);
+    }
+
+    return [$request, $destination, ['id' => $request->id, 'line_id' => $request->lines->first()->id]];
+}
+
+test('reservations across warehouses cannot exceed outstanding quantity and same location edits remain valid', function () {
+    [$request, $destination, $input] = snReservationFixture($this);
+    $first = snRun($this, 'custodian', 'reservation.create', $input + ['warehouse_id' => $this->warehouse->id, 'quantity' => '6']);
+    expect(fn () => snRun($this, 'custodian', 'reservation.create', $input + ['warehouse_id' => $destination->id, 'quantity' => '5']))->toThrow(ValidationException::class);
+    snRun($this, 'custodian', 'reservation.create', $input + ['warehouse_id' => $destination->id, 'quantity' => '4']);
+    snRun($this, 'custodian', 'reservation.create', $input + ['warehouse_id' => $this->warehouse->id, 'quantity' => '5']);
+    expect(StockReservation::findOrFail($first['id'])->quantity)->toBe('5.0000')->and(StockReservation::count())->toBe(2);
+});
+
+test('cross warehouse partial and full issuance release stale reservations immediately', function () {
+    [$request, $destination, $input] = snReservationFixture($this);
+    snRun($this, 'custodian', 'reservation.create', $input + ['warehouse_id' => $this->warehouse->id, 'quantity' => '10']);
+    $issue = ['id' => $request->id, 'warehouse_id' => $destination->id, 'recipient' => 'Office user', 'lines' => [['line_id' => $request->lines->first()->id, 'quantity' => '4']]];
+    snRun($this, 'custodian', 'issuance.create', $issue);
+    expect(StockReservation::where('status', 'active')->firstOrFail()->quantity)->toBe('6.0000');
+    $issue['lines'][0]['quantity'] = '6';
+    snRun($this, 'custodian', 'issuance.create', $issue);
+    expect($request->fresh()->status)->toBe('fulfilled')->and(StockReservation::where('status', 'active')->count())->toBe(0)
+        ->and(AuditLog::where('action', 'stock.reservation_released')->count())->toBe(2);
+});
+
+test('cancellation releases and audits active reservations while rejected requests stay rejected', function () {
+    [$request, $destination, $input] = snReservationFixture($this);
+    $reservation = snRun($this, 'custodian', 'reservation.create', $input + ['warehouse_id' => $this->warehouse->id, 'quantity' => '10']);
+    snRun($this, 'requester', 'request.cancel', ['id' => $request->id, 'reason' => 'No longer required']);
+    $audit = AuditLog::where('action', 'request.canceled')->firstOrFail();
+    expect(StockReservation::findOrFail($reservation['id'])->status)->toBe('released')
+        ->and($audit->before_values['released_reservation_ids'])->toBe([$reservation['id']]);
+    $rejected = snRequest($this, '3', false);
+    snRun($this, 'head', 'request.decide', ['id' => $rejected->id, 'decision' => 'rejected', 'comment' => 'Need unsupported']);
+    expect(fn () => snRun($this, 'requester', 'request.cancel', ['id' => $rejected->id, 'reason' => 'Erase rejection']))->toThrow(ValidationException::class);
+    expect($rejected->fresh()->status)->toBe('rejected');
+});
+
+test('budget totals aggregate ledger in SQL with exact monetary output', function () {
+    snAllocate($this, '1000.00');
+    $request = snRequest($this, '10');
+    $order = snOrder($this, $request, '10');
+    snReceive($this, $order, '10');
+    snRun($this, 'budget', 'purchase.spend', ['id' => $order->id, 'amount' => '99.99', 'document_reference' => 'EXACT-DECIMAL', 'final_payment' => true]);
+    DB::enableQueryLog();
+    $totals = $this->workflow->budget(BudgetAllocation::where('funding_source_id', $this->fund->id)->firstOrFail());
+    $queries = collect(DB::getQueryLog())->pluck('query');
+    DB::disableQueryLog();
+    expect($totals)->toMatchArray(['committed' => '0.00', 'spent' => '99.99', 'available' => '900.01'])
+        ->and($queries->filter(fn ($sql) => str_contains(strtoupper($sql), 'SUM(COMMITMENT_DELTA)')))->toHaveCount(1);
+});
+
+test('PostgreSQL budget aggregation preserves cents beyond floating point precision', function () {
+    if (DB::getDriverName() !== 'pgsql') {
+        $this->markTestSkipped('Requires PostgreSQL numeric aggregation; SQLite uses floating point for SUM.');
+    }
+    $allocation = BudgetAllocation::create(['funding_source_id' => $this->fund->id, 'fiscal_year_id' => $this->year->id, 'authorized_amount' => '99999999999999.99']);
+    $request = snRequest($this, '1');
+    $order = PurchaseOrder::create(['reference' => 'PO-EXACT-AGGREGATE', 'item_request_id' => $request->id, 'funding_source_id' => $this->fund->id, 'fiscal_year_id' => $this->year->id, 'department_id' => $this->department->id, 'supplier_id' => $this->supplier->id, 'created_by' => $this->users['procurement']->id, 'status' => 'ordered', 'total' => '12345678901234.57', 'committed_amount' => '12345678901234.57', 'spent_amount' => '0.00']);
+    foreach (['12345678901234.56', '0.02', '-0.01'] as $amount) {
+        FinancialEntry::create(['budget_allocation_id' => $allocation->id, 'purchase_order_id' => $order->id, 'user_id' => $this->users['budget']->id, 'kind' => 'commitment', 'commitment_delta' => $amount, 'expenditure_delta' => '0.00', 'reference' => 'Exact aggregation']);
+    }
+    expect($this->workflow->budget($allocation))->toMatchArray(['committed' => '12345678901234.57', 'spent' => '0.00', 'available' => '87654321098765.42']);
+});
+
+test('monthly counts retain every active catalog item including unstocked items', function () {
+    $second = Item::create(['sku' => 'UNSTOCKED', 'name' => 'Unstocked item', 'item_category_id' => $this->item->item_category_id, 'unit_of_measure_id' => $this->item->unit_of_measure_id, 'standard_cost' => '1.00']);
+    StockBalance::create(['funding_source_id' => $this->fund->id, 'warehouse_id' => $this->warehouse->id, 'item_id' => $this->item->id, 'quantity' => '7']);
+    $result = snRun($this, 'custodian', 'count.create', snScope($this) + ['warehouse_id' => $this->warehouse->id, 'counter_id' => $this->users['custodian']->id, 'count_month' => now()->startOfMonth()->format('Y-m-d')]);
+    $lines = InventoryCount::findOrFail($result['id'])->lines()->get()->keyBy('item_id');
+    expect($lines)->toHaveCount(2)->and($lines[$second->id]->system_quantity)->toBe('0.0000')->and($lines[$this->item->id]->system_quantity)->toBe('7.0000');
+});
+
+test('closed fiscal years require the explicit permission and an audited reason to reopen', function () {
+    $this->year->update(['status' => 'closed']);
+    $input = ['kind' => 'fiscal-year', 'id' => $this->year->id, 'year' => $this->year->year, 'starts_on' => $this->year->starts_on, 'ends_on' => $this->year->ends_on, 'status' => 'open'];
+    expect(fn () => snRun($this, 'admin', 'master.save', $input))->toThrow(ValidationException::class);
+    expect(fn () => snRun($this, 'budget', 'fiscal-year.reopen', ['id' => $this->year->id, 'reason' => 'Correction']))->toThrow(AuthorizationException::class);
+    expect(fn () => snRun($this, 'admin', 'fiscal-year.reopen', ['id' => $this->year->id, 'reason' => '']))->toThrow(ValidationException::class);
+    snRun($this, 'admin', 'fiscal-year.reopen', ['id' => $this->year->id, 'reason' => 'Authorized year-end correction']);
+    expect($this->year->fresh()->status)->toBe('open')->and(AuditLog::where('action', 'fiscal-year.reopened')->firstOrFail()->reason)->toBe('Authorized year-end correction');
+});
+
+test('dated transfers use the selected open fiscal year and reject date year mismatches', function () {
+    $prior = FiscalYear::create(['year' => 2025, 'starts_on' => '2025-01-01', 'ends_on' => '2025-12-31', 'status' => 'open']);
+    $destination = Warehouse::create(['code' => 'DATED-B', 'name' => 'Dated location']);
+    StockBalance::create(['funding_source_id' => $this->fund->id, 'warehouse_id' => $this->warehouse->id, 'item_id' => $this->item->id, 'quantity' => '20']);
+    $input = ['funding_source_id' => $this->fund->id, 'fiscal_year_id' => $prior->id, 'effective_on' => '2025-12-31', 'warehouse_id' => $this->warehouse->id, 'destination_warehouse_id' => $destination->id, 'item_id' => $this->item->id, 'quantity' => '5', 'reason' => 'Dated transfer'];
+    $result = snRun($this, 'custodian', 'transfer.create', $input);
+    $transfer = StockTransfer::findOrFail($result['id']);
+    expect($transfer->fiscal_year_id)->toBe($prior->id)->and($transfer->effective_on)->toBe('2025-12-31');
+    $input['effective_on'] = '2026-01-01';
+    expect(fn () => snRun($this, 'custodian', 'transfer.create', $input))->toThrow(ValidationException::class);
+    $input['effective_on'] = '2025-12-31';
+    $prior->update(['status' => 'closed']);
+    expect(fn () => snRun($this, 'custodian', 'transfer.create', $input))->toThrow(ValidationException::class);
 });

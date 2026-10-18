@@ -40,6 +40,11 @@ jobs:
       - run: composer install --no-interaction --prefer-dist
       - run: cp .env.example .env && php artisan key:generate
       - run: npm ci --no-fund
+      - run: composer audit --no-interaction
+      - run: npm audit --audit-level=high
+      - run: vendor/bin/pint --test
+      - run: vendor/bin/phpstan analyse --memory-limit=1G
+      - run: npm run check
       - run: node --test tests/setup/initialize-env.test.mjs
       - run: npm run build
       - run: npm run types:check
@@ -58,6 +63,13 @@ jobs:
       - run: docker compose up -d --build --wait --wait-timeout 300
       - run: docker compose exec -T app php artisan migrate --seed --force
       - run: curl --fail --silent http://localhost:8080/login > /dev/null
+      - name: Verify worker identities and runtime tools
+        run: |
+          test "$(docker compose exec -T queue id -u)" = "33"
+          test "$(docker compose exec -T scheduler id -u)" = "33"
+          docker compose exec -T app sh -ec '! command -v git; ! command -v composer; ! command -v unzip; ! command -v gcc'
+          docker compose exec -T queue php -r 'file_put_contents("/var/www/html/storage/logs/worker-permission-check", "worker writable");'
+          docker compose exec -T --user 33:33 app php -r '$path = "/var/www/html/storage/logs/worker-permission-check"; if (!is_writable($path)) { exit(1); } unlink($path);'
       - name: Show startup diagnostics on failure
         if: failure()
         run: docker compose logs --tail=80

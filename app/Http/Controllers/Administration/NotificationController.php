@@ -4,12 +4,14 @@ namespace App\Http\Controllers\Administration;
 
 use App\Http\Controllers\Controller;
 use App\Support\WorkflowVisibility;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use Inertia\Response;
 
 class NotificationController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request): Response
     {
         $fundIds = $request->user()->fundingSources()->pluck('funding_sources.id');
         $notifications = $request->user()->notifications()->latest()->limit(100)->get()
@@ -21,7 +23,7 @@ class NotificationController extends Controller
         ]);
     }
 
-    public function read(Request $request, string $notification)
+    public function read(Request $request, string $notification): RedirectResponse
     {
         $record = $request->user()->notifications()->findOrFail($notification);
         abort_unless($this->visible($request, $record->data), 403);
@@ -30,6 +32,7 @@ class NotificationController extends Controller
         return back()->with('success', 'Notification marked read.');
     }
 
+    /** @param array<string, mixed> $data */
     private function visible(Request $request, array $data): bool
     {
         return WorkflowVisibility::canSee($request->user(), $data);

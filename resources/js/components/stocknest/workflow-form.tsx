@@ -18,9 +18,10 @@ import {
     initialFormValues,
     type Action,
     type Field,
-    type FieldValue,
+    type FieldInputValue,
     type FormDefinition,
     type FormValues,
+    type LineValues,
 } from '@/lib/stocknest';
 
 function FormField({
@@ -32,21 +33,24 @@ function FormField({
     path,
 }: {
     field: Field;
-    value: FieldValue;
+    value: FieldInputValue;
     error?: string;
-    onChange: (value: FieldValue) => void;
+    onChange: (value: FieldInputValue) => void;
     disabled: boolean;
     path: string;
 }) {
     const id = useId();
     const [search, setSearch] = useState('');
     const searchable =
-        field.type === 'select' && (field.options?.length ?? 0) > 8;
+        ['select', 'multiselect'].includes(field.type) &&
+        (field.options?.length ?? 0) > 8;
     const options = field.options?.filter(
         (option) =>
             !search ||
             option.label.toLowerCase().includes(search.toLowerCase()) ||
-            String(option.value) === String(value),
+            (Array.isArray(value)
+                ? value.includes(option.value)
+                : String(option.value) === String(value)),
     );
     const common = {
         id,
@@ -60,6 +64,81 @@ function FormField({
               ? `${id}-description`
               : undefined,
     };
+    if (field.type === 'hidden') {
+        return <input type="hidden" name={path} value={String(value ?? '')} />;
+    }
+    if (field.type === 'multiselect') {
+        const selected = Array.isArray(value) ? value : [];
+        return (
+            <fieldset
+                className="sn-form-field sn-field-wide"
+                aria-describedby={common['aria-describedby']}
+                aria-invalid={common['aria-invalid']}
+            >
+                <legend>
+                    {field.label}
+                    {field.required && (
+                        <span className="sn-required"> (required)</span>
+                    )}
+                </legend>
+                {searchable && (
+                    <Input
+                        type="search"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        aria-label={`Search ${field.label.toLowerCase()} options`}
+                        placeholder={`Find ${field.label.toLowerCase()}…`}
+                        disabled={disabled || field.readOnly}
+                    />
+                )}
+                <div className="grid max-h-64 gap-2 overflow-y-auto rounded-md border p-3">
+                    {options?.map((option) => (
+                        <label
+                            key={option.value}
+                            className="flex items-center gap-2"
+                        >
+                            <input
+                                type="checkbox"
+                                name={`${path}[]`}
+                                value={option.value}
+                                checked={selected.includes(option.value)}
+                                disabled={disabled || field.readOnly}
+                                onChange={(event) =>
+                                    onChange(
+                                        event.target.checked
+                                            ? [...selected, option.value]
+                                            : selected.filter(
+                                                  (item) =>
+                                                      item !== option.value,
+                                              ),
+                                    )
+                                }
+                            />
+                            {option.label}
+                        </label>
+                    ))}
+                    {options?.length === 0 && <p>No matching options.</p>}
+                </div>
+                {field.description && (
+                    <p
+                        id={`${id}-description`}
+                        className="sn-field-description"
+                    >
+                        {field.description}
+                    </p>
+                )}
+                {error && (
+                    <p
+                        id={`${id}-error`}
+                        role="alert"
+                        className="sn-field-error"
+                    >
+                        {error}
+                    </p>
+                )}
+            </fieldset>
+        );
+    }
     return (
         <div
             className={`sn-form-field ${field.type === 'textarea' ? 'sn-field-wide' : ''}`}
@@ -80,13 +159,15 @@ function FormField({
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder={`Find ${field.label.toLowerCase()}…`}
                     aria-label={`Search ${field.label.toLowerCase()} options`}
-                    disabled={disabled}
+                    disabled={disabled || field.readOnly}
                     className="mb-2"
                 />
             )}
             {field.type === 'select' ? (
                 <select
                     {...common}
+                    disabled={disabled || field.readOnly}
+                    aria-readonly={field.readOnly}
                     value={String(value ?? '')}
                     onChange={(event) => onChange(event.target.value)}
                     className="sn-input"
@@ -103,6 +184,7 @@ function FormField({
             ) : field.type === 'textarea' ? (
                 <textarea
                     {...common}
+                    readOnly={field.readOnly}
                     value={String(value ?? '')}
                     onChange={(event) => onChange(event.target.value)}
                     placeholder={field.placeholder}
@@ -113,6 +195,7 @@ function FormField({
                 <div className="sn-checkbox-wrap">
                     <input
                         {...common}
+                        disabled={disabled || field.readOnly}
                         type="checkbox"
                         checked={Boolean(value)}
                         onChange={(event) => onChange(event.target.checked)}
@@ -123,6 +206,8 @@ function FormField({
                 <Input
                     {...common}
                     type={field.type}
+                    readOnly={field.readOnly}
+                    inputMode={field.type === 'number' ? 'decimal' : undefined}
                     value={String(value ?? '')}
                     onChange={(event) => onChange(event.target.value)}
                     placeholder={field.placeholder}
@@ -165,7 +250,12 @@ export function WorkflowForm({
     const [reviewed, setReviewed] = useState(false);
     const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
     const errors = form.errors as Record<string, string | undefined>;
-    const lines = (form.data.lines ?? []) as Record<string, FieldValue>[];
+    const lines = (form.data.lines ?? []) as LineValues[];
+    // Keep identity outside the payload so immutable field edits do not remount
+    // a row or move its local option-search state to the next row on deletion.
+    const [lineKeys, setLineKeys] = useState(() =>
+        ((defaults.lines ?? []) as LineValues[]).map(() => idempotencyKey()),
+    );
 
     function submit(event: FormEvent) {
         event.preventDefault();
@@ -177,6 +267,11 @@ export function WorkflowForm({
             preserveScroll: true,
             onSuccess: () => {
                 form.reset();
+                setLineKeys(
+                    ((defaults.lines ?? []) as LineValues[]).map(() =>
+                        idempotencyKey(),
+                    ),
+                );
                 form.setData('idempotency_key', idempotencyKey());
                 setReviewed(false);
                 setAwaitingConfirmation(false);
@@ -192,7 +287,7 @@ export function WorkflowForm({
         });
     }
 
-    function setLine(index: number, name: string, value: FieldValue) {
+    function setLine(index: number, name: string, value: FieldInputValue) {
         form.setData(
             'lines',
             lines.map((line, row) =>
@@ -249,7 +344,7 @@ export function WorkflowForm({
                                 key={field.name}
                                 field={field}
                                 path={field.name}
-                                value={form.data[field.name] as FieldValue}
+                                value={form.data[field.name] as FieldInputValue}
                                 error={errors[field.name]}
                                 disabled={form.processing}
                                 onChange={(value) => {
@@ -265,34 +360,44 @@ export function WorkflowForm({
                                 Line items <span>{lines.length}</span>
                             </legend>
                             <p className="sn-field-description">
-                                Add each item separately to preserve its
-                                quantity and cost.
+                                {definition.fixedLines
+                                    ? 'Review each requested item and enter its approved quantity.'
+                                    : 'Add each item separately to preserve its quantity and cost.'}
                             </p>
                             {lines.map((line, index) => (
-                                <div className="sn-line" key={index}>
+                                <div className="sn-line" key={lineKeys[index]}>
                                     <div className="sn-line-heading">
                                         <strong>Item {index + 1}</strong>
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            disabled={
-                                                form.processing ||
-                                                lines.length === 1
-                                            }
-                                            aria-label={`Remove item ${index + 1}`}
-                                            onClick={() =>
-                                                form.setData(
-                                                    'lines',
-                                                    lines.filter(
-                                                        (_, row) =>
-                                                            row !== index,
-                                                    ),
-                                                )
-                                            }
-                                        >
-                                            <Trash2 size={14} /> Remove
-                                        </Button>
+                                        {!definition.fixedLines && (
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                disabled={
+                                                    form.processing ||
+                                                    lines.length === 1
+                                                }
+                                                aria-label={`Remove item ${index + 1}`}
+                                                onClick={() => {
+                                                    setLineKeys(
+                                                        lineKeys.filter(
+                                                            (_, row) =>
+                                                                row !== index,
+                                                        ),
+                                                    );
+                                                    setReviewed(false);
+                                                    form.setData(
+                                                        'lines',
+                                                        lines.filter(
+                                                            (_, row) =>
+                                                                row !== index,
+                                                        ),
+                                                    );
+                                                }}
+                                            >
+                                                <Trash2 size={14} /> Remove
+                                            </Button>
+                                        )}
                                     </div>
                                     <div className="sn-form-grid">
                                         {definition.lineFields!.map((field) => (
@@ -324,20 +429,26 @@ export function WorkflowForm({
                                     {errors.lines}
                                 </p>
                             )}
-                            <Button
-                                type="button"
-                                variant="outline"
-                                disabled={form.processing}
-                                onClick={() => {
-                                    form.setData('lines', [
-                                        ...lines,
-                                        emptyLine(definition.lineFields!),
-                                    ]);
-                                    setReviewed(false);
-                                }}
-                            >
-                                <Plus size={15} /> Add item
-                            </Button>
+                            {!definition.fixedLines && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={form.processing}
+                                    onClick={() => {
+                                        setLineKeys([
+                                            ...lineKeys,
+                                            idempotencyKey(),
+                                        ]);
+                                        form.setData('lines', [
+                                            ...lines,
+                                            emptyLine(definition.lineFields!),
+                                        ]);
+                                        setReviewed(false);
+                                    }}
+                                >
+                                    <Plus size={15} /> Add item
+                                </Button>
+                            )}
                         </fieldset>
                     ) : null}
                     {confirmation && awaitingConfirmation && (

@@ -12,16 +12,19 @@ class GoodsReceipt extends DomainModel
 {
     public $timestamps = false;
 
+    /** @return BelongsTo<PurchaseOrder, $this> */
     public function order(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrder::class, 'purchase_order_id');
     }
 
+    /** @return BelongsTo<Warehouse, $this> */
     public function warehouse(): BelongsTo
     {
         return $this->belongsTo(Warehouse::class);
     }
 
+    /** @return HasMany<GoodsReceiptLine, $this> */
     public function lines(): HasMany
     {
         return $this->hasMany(GoodsReceiptLine::class);

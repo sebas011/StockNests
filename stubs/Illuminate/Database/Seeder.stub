@@ -1,0 +1,16 @@
+<?php
+
+namespace Illuminate\Database;
+
+use Illuminate\Console\Command;
+
+abstract class Seeder
+{
+    /**
+     * The upstream untyped property starts as null until setCommand() is called.
+     * Programmatic seeding can therefore run without an attached console command.
+     *
+     * @var Command|null
+     */
+    protected $command;
+}

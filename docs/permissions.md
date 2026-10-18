@@ -2,39 +2,41 @@
 
 **Status:** Proposed default policy. The nine roles are configurable permission bundles, not sufficient authorization by themselves.
 
+Implemented audit controls add `budget.approve`, `fund.approve`, `requests.department-approve` and `fiscal.reopen`. Request approval also requires `requests.approve`; one actor cannot approve two stages in the current approval cycle. Returned requests may start a new cycle after resubmission. Existing installations receive the new permissions through an additive migration for eligible built-in role bundles; it preserves previously removed grants and custom roles. Administrators should review custom roles explicitly. Fiscal reopening requires its dedicated permission and an audited reason. The broader matrix below remains a proposed policy; it does not certify every listed capability as implemented.
+
 An action is allowed only if the account is active, the server-side permission is present, document state permits it, department and fund scopes cover the record, applicable approval authority is effective and within its amount/quantity limit, and separation-of-duties rules pass. Deny by default. Shared catalog data may be organization-wide; transaction details remain scoped.
 
 ## Default role matrix
 
 Legend: **M** manage; **P** prepare/submit; **A** decide only an assigned approval step; **X** execute a posted transaction; **R** read/export within assigned scope; **—** denied. All entries remain subject to scope and authority. Preparation and approval by the same person are denied by default even when one person holds several roles.
 
-| Capability | Super Admin | System Admin | Budget Officer | Dept Requester | Dept Head | Fund Approver | Procurement Officer | Inventory Custodian | Auditor |
-|---|---|---|---|---|---|---|---|---|---|
-| Organization, system configuration | M | M | R | — | R | R | R | R | R |
-| Users, account status, role assignment | M | M¹ | — | — | — | — | — | — | R |
-| Permission definitions / privileged grants | M¹ | — | — | — | — | — | — | — | R |
-| Department/fund access assignment | M¹ | M¹ | R | — | R | R | R | R | R |
-| Fund / fiscal-year administration | M | M | P | — | R | R | R | R | R |
-| Fiscal close/reopen execution | X² | X² | P | — | R | A² | R | R | R |
-| Item, UOM, category, supplier catalog | M | M | R | R | R | R | M | M | R |
-| Projection preparation / amendments | R | R | P | P³ | P³ | R | R | R | R |
-| Projection / amendment approval | — | — | — | — | A³ | A | — | — | R |
-| Allocation / budget adjustment proposal | R | R | P | — | R | R | — | — | R |
-| Allocation / adjustment authorization | — | — | — | — | — | A | — | — | R |
-| Monthly request preparation | R | R | R | P³ | P³ | R | R | R | R |
-| Request approval / partial authorization | — | — | — | — | A³ | A | — | — | R |
-| Unplanned / over-budget exception | — | — | P | P³ | A³ | A² | P | — | R |
-| Procurement requisition / PO preparation | R | R | R | — | R | R | P | R | R |
-| PO approval / commitment authority | — | — | R | — | — | A | — | — | R |
-| Expenditure preparation | R | R | P | — | — | R | P⁴ | R | R |
-| Expenditure approval / posting | — | — | X⁴ | — | — | A⁴ | — | — | R |
-| Receipt / reservation / issuance / return | R | R | R | R³ | R³ | R | R | X | R |
-| Same-fund location transfer | R | R | R | — | — | R | — | P/X⁵ | R |
-| Physical count creation / encoding | R | R | R | — | — | R | — | P⁵ | R |
-| Count discrepancy / adjustment approval | — | — | R | — | — | A⁵ | — | — | R |
-| Approved adjustment execution | — | — | R | — | — | R | — | X⁵ | R |
-| Reports, dashboards, attachments | R | R | R | R³ | R³ | R | R | R | R |
-| Audit access / approved archive jobs | M⁶ | R | R | — | R³ | R | R | R | R |
+| Capability                                 | Super Admin | System Admin | Budget Officer | Dept Requester | Dept Head | Fund Approver | Procurement Officer | Inventory Custodian | Auditor |
+| ------------------------------------------ | ----------- | ------------ | -------------- | -------------- | --------- | ------------- | ------------------- | ------------------- | ------- |
+| Organization, system configuration         | M           | M            | R              | —              | R         | R             | R                   | R                   | R       |
+| Users, account status, role assignment     | M           | M¹           | —              | —              | —         | —             | —                   | —                   | R       |
+| Permission definitions / privileged grants | M¹          | —            | —              | —              | —         | —             | —                   | —                   | R       |
+| Department/fund access assignment          | M¹          | M¹           | R              | —              | R         | R             | R                   | R                   | R       |
+| Fund / fiscal-year administration          | M           | M            | P              | —              | R         | R             | R                   | R                   | R       |
+| Fiscal close/reopen execution              | X²          | X²           | P              | —              | R         | A²            | R                   | R                   | R       |
+| Item, UOM, category, supplier catalog      | M           | M            | R              | R              | R         | R             | M                   | M                   | R       |
+| Projection preparation / amendments        | R           | R            | P              | P³             | P³        | R             | R                   | R                   | R       |
+| Projection / amendment approval            | —           | —            | —              | —              | A³        | A             | —                   | —                   | R       |
+| Allocation / budget adjustment proposal    | R           | R            | P              | —              | R         | R             | —                   | —                   | R       |
+| Allocation / adjustment authorization      | —           | —            | —              | —              | —         | A             | —                   | —                   | R       |
+| Monthly request preparation                | R           | R            | R              | P³             | P³        | R             | R                   | R                   | R       |
+| Request approval / partial authorization   | —           | —            | —              | —              | A³        | A             | —                   | —                   | R       |
+| Unplanned / over-budget exception          | —           | —            | P              | P³             | A³        | A²            | P                   | —                   | R       |
+| Procurement requisition / PO preparation   | R           | R            | R              | —              | R         | R             | P                   | R                   | R       |
+| PO approval / commitment authority         | —           | —            | R              | —              | —         | A             | —                   | —                   | R       |
+| Expenditure preparation                    | R           | R            | P              | —              | —         | R             | P⁴                  | R                   | R       |
+| Expenditure approval / posting             | —           | —            | X⁴             | —              | —         | A⁴            | —                   | —                   | R       |
+| Receipt / reservation / issuance / return  | R           | R            | R              | R³             | R³        | R             | R                   | X                   | R       |
+| Same-fund location transfer                | R           | R            | R              | —              | —         | R             | —                   | P/X⁵                | R       |
+| Physical count creation / encoding         | R           | R            | R              | —              | —         | R             | —                   | P⁵                  | R       |
+| Count discrepancy / adjustment approval    | —           | —            | R              | —              | —         | A⁵            | —                   | —                   | R       |
+| Approved adjustment execution              | —           | —            | R              | —              | —         | R             | —                   | X⁵                  | R       |
+| Reports, dashboards, attachments           | R           | R            | R              | R³             | R³        | R             | R                   | R                   | R       |
+| Audit access / approved archive jobs       | M⁶          | R            | R              | —              | R³        | R             | R                   | R                   | R       |
 
 1. Administrative access is not financial approval authority. Privilege/scoping changes must be audited, and an administrator cannot give themselves an exception by ordinary configuration. Require a distinct authorized administrator for self-approval exceptions and privileged elevation; record reason, effective dates, scope, and review. Built-in super administration is not an implicit transaction-policy bypass.
 2. Fiscal reopening and budget overrides require explicit extra permissions and assigned authority, not merely the role. Require a reason and independent authorization. Never bypass ledger integrity or permit negative stock via an override.

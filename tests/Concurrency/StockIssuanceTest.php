@@ -53,7 +53,7 @@ beforeEach(function () {
     for ($index = 0; $index < 2; $index++) {
         $request = $run('requester', 'request.save', $scope + ['required_on' => now()->addWeek()->format('Y-m-d'), 'purpose' => 'Concurrent requirement', 'lines' => [['item_id' => $item->id, 'quantity' => '10', 'unit_price' => '1.00']]]);
         $run('requester', 'request.submit', ['id' => $request['id']]);
-        $run('head', 'request.decide', ['id' => $request['id'], 'decision' => 'approved']);
+        $run('head', 'request.decide', ['id' => $request['id'], 'decision' => 'approved', 'comment' => 'Unplanned department need reviewed']);
         $run('approver', 'request.decide', ['id' => $request['id'], 'decision' => 'approved', 'comment' => 'Unplanned item authorized']);
         $requests[] = $request['id'];
     }
