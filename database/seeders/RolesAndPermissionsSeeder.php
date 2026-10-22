@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Domain\OfficeWorkflow;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -29,6 +30,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'Inventory Custodian' => ['dashboard.view', 'inventory.manage', 'reports.view'],
             'Auditor' => ['dashboard.view', 'reports.view', 'audit.view'],
         ];
+        if (OfficeWorkflow::enabled()) {
+            $roles['Office Staff'] = ['dashboard.view', 'master-data.manage', 'budgets.manage', 'requests.create', 'procurement.manage', 'inventory.manage', 'reports.view'];
+        }
         foreach ($roles as $name => $grants) {
             // Never overwrite grants configured by an administrator on a later seed.
             if (! Role::where('name', $name)->where('guard_name', 'web')->exists()) {

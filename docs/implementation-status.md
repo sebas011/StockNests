@@ -1,4 +1,18 @@
-# Implementation status — 2026-10-16
+# Implementation status — 2026-10-23
+
+## Current office scope
+
+The accepted scope is now the **Office of the Vice President for Academic Affairs**, using StockNest after Supply approves the annual projection. The [office workflow guide](office-workflow.md) describes the current behavior and takes precedence over the original institutional proposal.
+
+Implemented: fixed office identity; direct entry of externally approved annual items and amendments; submitted Supply quantity limits; independent partial Supply receiving; separate cash requests and outside purchases with recorded external authorization; office consumption; monthly item statistics; GAA/APPCSE budgets; physical counts; exports and audit records. Internal approval queues and department selection are absent from the office workflow. Historical documents are preserved.
+
+Pending office input: official printable Supply/cash form templates. General CSV, Excel and PDF reports are available in the meantime. Custom forms will be implemented after those templates are supplied.
+
+The Windows download bundles its own runtimes and database. Each PC has separate local data. Follow the [portable guide](operations/portable-windows.md) to move data or update without replacing the data folder.
+
+## Historical implementation notes
+
+The material below describes the earlier institution-wide proposal and its remaining work at that time. Those outstanding proposal features are not requirements for the narrower office workflow.
 
 This is the first integrated development implementation. It is not a production-readiness certificate and does not mark the complete master prompt finished. The architecture/requirements documents retain the full target scope.
 

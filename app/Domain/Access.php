@@ -30,8 +30,20 @@ final class Access
 
     public static function departmentLimited(User $user): bool
     {
+        if (OfficeWorkflow::enabled()) {
+            return false;
+        }
+
         // A newly configured role receives the narrower department scope by default.
         return ! $user->hasAnyRole(['Super Administrator', 'System Administrator', 'Budget Officer', 'Fund Approver', 'Procurement Officer', 'Inventory Custodian', 'Auditor']);
+    }
+
+    public static function ownRequestsOnly(User $user): bool
+    {
+        return $user->hasRole('Department Requester') && ! $user->hasRole('Department Head')
+            && (OfficeWorkflow::enabled()
+                ? ! $user->hasAnyPermission(['inventory.manage', 'procurement.manage', 'budgets.manage', 'users.manage', 'audit.view', 'requests.approve'])
+                : self::departmentLimited($user));
     }
 
     /**
@@ -51,7 +63,7 @@ final class Access
         if ($department && self::departmentLimited($user)) {
             $query->where('department_id', $user->department_id);
         }
-        if ($query->getModel() instanceof ItemRequest && self::departmentLimited($user) && $user->hasRole('Department Requester') && ! $user->hasRole('Department Head')) {
+        if ($query->getModel() instanceof ItemRequest && self::ownRequestsOnly($user)) {
             $query->where('created_by', $user->id);
         }
 

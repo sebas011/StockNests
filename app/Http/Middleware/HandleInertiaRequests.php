@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Domain\OfficeWorkflow;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -47,6 +48,8 @@ class HandleInertiaRequests extends Middleware
                 'error' => fn () => $request->session()->get('error'),
             ],
             'currency' => config('stocknest.currency'),
+            'organization' => OfficeWorkflow::enabled() ? OfficeWorkflow::NAME : config('stocknest.organization'),
+            'officeWorkflow' => OfficeWorkflow::enabled(),
             'timezone' => config('app.timezone'),
             'demoMode' => config('stocknest.demo'),
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',

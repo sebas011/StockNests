@@ -27,6 +27,7 @@ use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\StockTransfer;
 use App\Models\Supplier;
+use App\Models\SupplyReceipt;
 use App\Models\SystemSetting;
 use App\Models\UnitOfMeasure;
 use App\Models\User;
@@ -51,6 +52,12 @@ final class WorkflowService
     public function execute(User $user, string $operation, array $data, string $key): array
     {
         unset($data['idempotency_key']);
+        if (OfficeWorkflow::enabled()) {
+            $this->ensure(! in_array($operation, ['allocation.decide', 'projection.submit', 'projection.decide', 'request.decide', 'purchase.approve', 'count.decide', 'reservation.create', 'transfer.create', 'issuance.create', 'issuance.return'], true), 'This institutional workflow is not used by the office tracking system.');
+            if (in_array($operation, ['projection.save', 'request.save'], true)) {
+                $data['department_id'] = OfficeWorkflow::departmentId();
+            }
+        }
         /** @param array<array-key, mixed> $value
          * @return array<array-key, mixed>
          */
@@ -95,6 +102,8 @@ final class WorkflowService
                 'purchase.cancel' => $this->cancelPurchase($user, $data),
                 'purchase.spend' => $this->spend($user, $data),
                 'receipt.create' => $this->receive($user, $data),
+                'supply.receive' => $this->receiveSupply($user, $data),
+                'stock.consume' => $this->consume($user, $data),
                 'issuance.create' => $this->issue($user, $data),
                 'issuance.return' => $this->returnStock($user, $data),
                 'reservation.create' => $this->reserve($user, $data),
@@ -224,6 +233,7 @@ final class WorkflowService
     private function master(User $user, array $data): Model
     {
         Access::assert($user, 'master-data.manage');
+        $this->ensure(! OfficeWorkflow::enabled() || $data['kind'] !== 'department', 'This system tracks only the Office of the Vice President for Academic Affairs.');
         $classes = ['fund' => FundingSource::class, 'department' => Department::class, 'fiscal-year' => FiscalYear::class, 'category' => ItemCategory::class, 'unit' => UnitOfMeasure::class, 'warehouse' => Warehouse::class, 'supplier' => Supplier::class, 'item' => Item::class];
         $class = $classes[$data['kind']];
         $allowed = match ($data['kind']) {
@@ -273,6 +283,16 @@ final class WorkflowService
         $allocation = BudgetAllocation::firstOrCreate(['funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $data['fiscal_year_id']], ['authorized_amount' => '0']);
         $allocation = BudgetAllocation::whereKey($allocation->id)->lockForUpdate()->firstOrFail();
         $record = BudgetAdjustment::create(['budget_allocation_id' => $allocation->id, 'created_by' => $user->id, 'amount' => $data['amount'], 'reason' => $data['reason'], 'status' => 'submitted']);
+        if (OfficeWorkflow::enabled()) {
+            $new = Decimal::add($allocation->authorized_amount, $data['amount'], 2);
+            $totals = $this->budget($allocation);
+            $this->ensure(Decimal::cmp($new, Decimal::add($totals['committed'], $totals['spent'], 2), 2) >= 0, 'The authorized budget cannot be reduced below existing commitments and expenditure.');
+            $allocation->update(['authorized_amount' => $new]);
+            $record->update(['status' => 'approved', 'approved_by' => $user->id]);
+            $this->audit($user, $record, 'allocation.recorded', [], $data['reason'], (int) $allocation->funding_source_id);
+
+            return $record;
+        }
         $this->audit($user, $record, 'allocation.submitted', [], $data['reason'], (int) $allocation->funding_source_id);
 
         return $record;
@@ -333,7 +353,15 @@ final class WorkflowService
             $projection->lines()->delete();
         }
         $revision = $projection->exists ? $projection->revision : ($original ? (int) AnnualProjection::where(fn ($q) => $q->whereKey($original->id)->orWhere('original_projection_id', $original->id))->max('revision') + 1 : 1);
-        $projection->fill(['reference' => $projection->reference ?? 'PRJ-'.Str::upper(Str::random(10)), 'funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $data['fiscal_year_id'], 'department_id' => $data['department_id'], 'created_by' => $projection->created_by ?? $user->id, 'original_projection_id' => $original?->id, 'revision' => $revision, 'status' => 'draft', 'total' => Decimal::sum(array_column($lines, 'total')), 'justification' => $data['justification']])->save();
+        if (OfficeWorkflow::enabled()) {
+            $this->ensure($original || ! AnnualProjection::where('funding_source_id', $data['funding_source_id'])->where('fiscal_year_id', $data['fiscal_year_id'])->where('department_id', $data['department_id'])->whereNull('original_projection_id')->where('status', 'approved')->exists(), 'An approved annual plan already exists. Record an approved amendment instead.');
+            $requested = $this->supplyRequestedQuantities((int) $data['funding_source_id'], (int) $data['fiscal_year_id'], (int) $data['department_id']);
+            $approved = collect($lines)->keyBy('item_id');
+            foreach ($requested as $item => $quantity) {
+                $this->ensure(Decimal::cmp($approved->get($item)['quantity'] ?? '0', $quantity) >= 0, 'The approved annual allowance cannot be reduced below quantities already submitted to Supply.', 'lines');
+            }
+        }
+        $projection->fill(['reference' => $projection->reference ?? 'PRJ-'.Str::upper(Str::random(10)), 'funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $data['fiscal_year_id'], 'department_id' => $data['department_id'], 'created_by' => $projection->created_by ?? $user->id, 'original_projection_id' => $original?->id, 'revision' => $revision, 'status' => OfficeWorkflow::enabled() ? 'approved' : 'draft', 'approved_at' => OfficeWorkflow::enabled() ? now() : null, 'total' => Decimal::sum(array_column($lines, 'total')), 'justification' => $data['justification']])->save();
         $projection->lines()->createMany($lines);
         $this->audit($user, $projection, 'projection.saved', $before);
 
@@ -376,6 +404,27 @@ final class WorkflowService
         $this->ensure(in_array($record->status, ['draft', 'returned'], true), 'Only draft or returned records may be submitted.');
         $this->ensure($record->lines()->exists(), 'At least one item is required.');
         $before = $record->toArray();
+        if (OfficeWorkflow::enabled() && $record instanceof ItemRequest) {
+            $lines = $record->lines()->orderBy('item_id')->lockForUpdate()->get();
+            if ($record->channel === 'supply') {
+                $plan = OfficeWorkflow::currentPlans()->where('funding_source_id', $record->funding_source_id)->where('fiscal_year_id', $record->fiscal_year_id)->where('department_id', $record->department_id)->first();
+                $this->ensure($plan !== null, 'Encode the externally approved annual items before submitting requests to Supply.');
+                $approved = $plan->lines()->get()->keyBy('item_id');
+                $requested = $this->supplyRequestedQuantities((int) $record->funding_source_id, (int) $record->fiscal_year_id, (int) $record->department_id);
+                foreach ($lines as $line) {
+                    $allowance = $approved->get($line->item_id)->quantity ?? '0';
+                    $used = $requested[(int) $line->item_id] ?? '0';
+                    $this->ensure(Decimal::cmp(Decimal::add($used, $line->quantity), $allowance) <= 0, 'This request exceeds the remaining approved annual quantity for an item.', 'lines');
+                }
+            }
+            foreach ($lines as $line) {
+                $line->update(['approved_quantity' => $line->quantity]);
+            }
+            $record->update(['status' => $record->channel === 'cash' ? 'approved' : 'submitted', 'submitted_at' => now()]);
+            $this->audit($user, $record, 'request.submitted', $before);
+
+            return $record;
+        }
         $record->update(['status' => 'submitted', 'submitted_at' => now()]);
         $this->audit($user, $record, $class === ItemRequest::class ? 'request.submitted' : 'projection.submitted', $before);
 
@@ -404,6 +453,8 @@ final class WorkflowService
         Access::assert($user, 'requests.create', (int) $data['funding_source_id'], (int) $data['department_id']);
         $this->activeYear((int) $data['fiscal_year_id']);
         $lines = $this->costedLines($data['lines']);
+        $channel = $data['channel'] ?? 'supply';
+        $this->ensure(in_array($channel, ['supply', 'cash'], true), 'Choose a Supply request or an outside cash purchase.', 'channel');
         $unplanned = false;
         $currentPlanIds = AnnualProjection::where('funding_source_id', $data['funding_source_id'])
             ->where('fiscal_year_id', $data['fiscal_year_id'])->where('department_id', $data['department_id'])
@@ -425,11 +476,26 @@ final class WorkflowService
         if ($record->exists) {
             $record->lines()->delete();
         }
-        $record->fill(['reference' => $record->reference ?? 'REQ-'.Str::upper(Str::random(10)), 'funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $data['fiscal_year_id'], 'department_id' => $data['department_id'], 'created_by' => $record->created_by ?? $user->id, 'required_on' => $data['required_on'], 'purpose' => $data['purpose'], 'priority' => $data['priority'] ?? 'normal', 'status' => 'draft', 'approval_stage' => 0, 'is_unplanned' => $unplanned, 'estimated_total' => Decimal::sum(array_map(fn ($l) => Decimal::mul($l['quantity'], $l['unit_price']), $lines))])->save();
+        $record->fill(['reference' => $record->reference ?? 'REQ-'.Str::upper(Str::random(10)), 'funding_source_id' => $data['funding_source_id'], 'fiscal_year_id' => $data['fiscal_year_id'], 'department_id' => $data['department_id'], 'created_by' => $record->created_by ?? $user->id, 'channel' => $channel, 'required_on' => $data['required_on'], 'purpose' => $data['purpose'], 'priority' => $data['priority'] ?? 'normal', 'status' => 'draft', 'approval_stage' => 0, 'is_unplanned' => $unplanned, 'estimated_total' => Decimal::sum(array_map(fn ($l) => Decimal::mul($l['quantity'], $l['unit_price']), $lines))])->save();
         $record->lines()->createMany($lines);
         $this->audit($user, $record, 'request.saved', $before);
 
         return $record;
+    }
+
+    /** @return array<int, numeric-string> */
+    private function supplyRequestedQuantities(int $fund, int $year, int $department): array
+    {
+        $quantities = DB::table('item_request_lines')->join('item_requests', 'item_requests.id', '=', 'item_request_lines.item_request_id')
+            ->where('item_requests.funding_source_id', $fund)->where('item_requests.fiscal_year_id', $year)->where('item_requests.department_id', $department)
+            ->where('item_requests.channel', 'supply')->whereNotNull('item_requests.submitted_at')->whereNotIn('item_requests.status', ['draft', 'returned', 'rejected', 'canceled'])
+            ->groupBy('item_request_lines.item_id')->selectRaw('item_request_lines.item_id, SUM(item_request_lines.quantity) AS requested')->get();
+        $result = [];
+        foreach ($quantities as $quantity) {
+            $result[(int) $quantity->item_id] = Decimal::add((string) $quantity->requested, '0');
+        }
+
+        return $result;
     }
 
     /** @return list<string> */
@@ -512,6 +578,7 @@ final class WorkflowService
         $this->requestOwner($user, $record);
         $this->ensure(! in_array($record->status, ['fulfilled', 'canceled', 'closed', 'rejected'], true), 'This request cannot be canceled.');
         $this->ensure(! $record->purchaseOrders()->whereNot('status', 'canceled')->exists() && ! $record->issuances()->exists(), 'Cancel purchase orders first; requests with issuances must be completed or returned.');
+        $this->ensure(! $record->supplyReceipts()->exists(), 'Requests with received Supply items cannot be canceled.');
         $before = $record->toArray();
         $reservations = StockReservation::whereIn('item_request_line_id', $record->lines()->pluck('id'))->where('status', 'active')->orderBy('id')->lockForUpdate()->get();
         $before['released_reservation_ids'] = $reservations->modelKeys();
@@ -537,6 +604,10 @@ final class WorkflowService
     private function purchase(User $user, array $data): PurchaseOrder
     {
         $request = $this->record($user, ItemRequest::class, (int) $data['item_request_id'], 'procurement.manage');
+        if (OfficeWorkflow::enabled()) {
+            $this->ensure($request->channel === 'cash', 'Outside purchases must use a separate cash request.');
+            $this->ensure(filled($data['authorization_reference'] ?? null), 'Record the external cash authorization before recording a purchase.', 'authorization_reference');
+        }
         $this->ensure(in_array($request->status, ['approved', 'partially_fulfilled'], true), 'Only approved requests may be procured.');
         $lines = [];
         $seen = [];
@@ -548,8 +619,12 @@ final class WorkflowService
             $this->ensure(Decimal::cmp($input['quantity'], '0') > 0 && Decimal::cmp(Decimal::add($ordered, $input['quantity']), $line->approved_quantity) <= 0, 'Purchase quantities exceed the approved request.');
             $lines[] = ['item_request_line_id' => $line->id, 'item_id' => $line->item_id, 'quantity' => $input['quantity'], 'unit_price' => $input['unit_price'], 'total' => Decimal::mul($input['quantity'], $input['unit_price'])];
         }
-        $order = PurchaseOrder::create(['reference' => 'PO-'.Str::upper(Str::random(10)), 'item_request_id' => $request->id, 'supplier_id' => $data['supplier_id'], 'funding_source_id' => $request->funding_source_id, 'fiscal_year_id' => $request->fiscal_year_id, 'department_id' => $request->department_id, 'created_by' => $user->id, 'status' => 'draft', 'total' => Decimal::sum(array_column($lines, 'total')), 'remarks' => $data['remarks'] ?? null]);
+        $this->ensure(count($lines) > 0, 'At least one purchase item is required.', 'lines');
+        $order = PurchaseOrder::create(['reference' => 'PO-'.Str::upper(Str::random(10)), 'item_request_id' => $request->id, 'supplier_id' => $data['supplier_id'], 'funding_source_id' => $request->funding_source_id, 'fiscal_year_id' => $request->fiscal_year_id, 'department_id' => $request->department_id, 'created_by' => $user->id, 'status' => 'draft', 'total' => Decimal::sum(array_column($lines, 'total')), 'authorization_reference' => $data['authorization_reference'] ?? null, 'remarks' => $data['remarks'] ?? null]);
         $order->lines()->createMany($lines);
+        if (OfficeWorkflow::enabled()) {
+            $this->commitPurchase($user, $order, $data['remarks'] ?? null);
+        }
         $this->audit($user, $order, 'purchase.created');
 
         return $order;
@@ -568,16 +643,22 @@ final class WorkflowService
     {
         $order = $this->record($user, PurchaseOrder::class, (int) $data['id'], 'fund.approve', true);
         $this->ensure($order->status === 'draft', 'Only draft orders can be approved.');
+        $this->decision($user, $order, 'approved', $data['comment'] ?? null);
+
+        return $this->commitPurchase($user, $order, $data['comment'] ?? null);
+    }
+
+    private function commitPurchase(User $user, PurchaseOrder $order, ?string $comment): PurchaseOrder
+    {
         $allocation = $this->allocationFor($order);
         $budget = $this->budget($allocation);
         if (Decimal::cmp($order->total, $budget['available'], 2) > 0) {
-            $this->ensure($order->fund->budget_control === 'soft' && filled($data['comment'] ?? null), 'This order exceeds the remaining authorized budget. A hard limit cannot be overridden.');
+            $this->ensure($order->fund->budget_control === 'soft' && filled($comment), 'This order exceeds the remaining authorized budget. A hard limit cannot be overridden.');
         }
-        $this->decision($user, $order, 'approved', $data['comment'] ?? null);
         FinancialEntry::create(['budget_allocation_id' => $allocation->id, 'purchase_order_id' => $order->id, 'user_id' => $user->id, 'kind' => 'commitment', 'commitment_delta' => $order->total, 'expenditure_delta' => '0', 'reference' => $order->reference, 'created_at' => now()]);
         $before = $order->toArray();
         $order->update(['status' => 'ordered', 'committed_amount' => $order->total]);
-        $this->audit($user, $order, 'purchase.approved', $before, $data['comment'] ?? null);
+        $this->audit($user, $order, OfficeWorkflow::enabled() ? 'purchase.authority_recorded' : 'purchase.approved', $before, $comment);
 
         return $order;
     }
@@ -625,12 +706,59 @@ final class WorkflowService
         return StockBalance::where('funding_source_id', $fund)->where('warehouse_id', $warehouse)->where('item_id', $item)->lockForUpdate()->firstOrFail();
     }
 
-    private function move(User $user, StockBalance $balance, string $delta, string $kind, Model $source, string $remarks): void
+    private function move(User $user, StockBalance $balance, string $delta, string $kind, Model $source, string $remarks): StockMovement
     {
         $after = Decimal::add($balance->quantity, $delta);
         $this->ensure(Decimal::cmp($after, '0') >= 0, 'Insufficient stock. This transaction would make inventory negative.');
         $balance->update(['quantity' => $after]);
-        StockMovement::create(['stock_balance_id' => $balance->id, 'user_id' => $user->id, 'kind' => $kind, 'quantity_delta' => $delta, 'balance_after' => $after, 'source_type' => $source::class, 'source_id' => $source->getKey(), 'remarks' => $remarks, 'created_at' => now()]);
+
+        return StockMovement::create(['stock_balance_id' => $balance->id, 'user_id' => $user->id, 'kind' => $kind, 'quantity_delta' => $delta, 'balance_after' => $after, 'source_type' => $source::class, 'source_id' => $source->getKey(), 'remarks' => $remarks, 'created_at' => now()]);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function receiveSupply(User $user, array $data): SupplyReceipt
+    {
+        $this->ensure(OfficeWorkflow::enabled(), 'Supply receiving is available in the office workflow.');
+        $request = $this->record($user, ItemRequest::class, (int) $data['id'], 'inventory.manage');
+        $this->ensure($request->channel === 'supply' && in_array($request->status, ['submitted', 'partially_received'], true), 'Only submitted Supply requests with outstanding items can be received.');
+        Warehouse::whereKey($data['warehouse_id'])->where('is_active', true)->firstOrFail();
+        $inputs = $this->commandLines($data);
+        $this->ensure(count($inputs) > 0, 'At least one received item is required.', 'lines');
+        $receipt = SupplyReceipt::create(['reference' => 'SUP-'.Str::upper(Str::random(10)), 'item_request_id' => $request->id, 'funding_source_id' => $request->funding_source_id, 'warehouse_id' => $data['warehouse_id'], 'received_by' => $user->id, 'delivery_reference' => $data['delivery_reference'], 'created_at' => now()]);
+        $seen = [];
+        foreach (collect($inputs)->sortBy('line_id') as $input) {
+            $line = $request->lines()->whereKey($input['line_id'])->lockForUpdate()->firstOrFail();
+            $this->ensure(! in_array($line->id, $seen, true), 'Duplicate Supply receiving line.', 'lines');
+            $seen[] = $line->id;
+            $quantity = (string) $input['quantity'];
+            $this->ensure(Decimal::cmp($quantity, '0') > 0 && Decimal::cmp(Decimal::add($line->received_quantity, $quantity), $line->quantity) <= 0, 'Supply delivery exceeds the outstanding requested quantity.', 'lines');
+            $receipt->lines()->create(['item_request_line_id' => $line->id, 'item_id' => $line->item_id, 'quantity' => $quantity]);
+            $balance = $this->balance((int) $request->funding_source_id, (int) $data['warehouse_id'], (int) $line->item_id);
+            $this->move($user, $balance, $quantity, 'supply_receipt', $receipt, $data['delivery_reference']);
+            $line->update(['received_quantity' => Decimal::add($line->received_quantity, $quantity)]);
+        }
+        $complete = $request->lines()->get()->every(fn ($line) => Decimal::cmp($line->quantity, $line->received_quantity) === 0);
+        $request->update(['status' => $complete ? 'fulfilled' : 'partially_received']);
+        $this->audit($user, $receipt, 'supply.received');
+
+        return $receipt;
+    }
+
+    /** @param array<string, mixed> $data */
+    private function consume(User $user, array $data): StockMovement
+    {
+        $this->ensure(OfficeWorkflow::enabled(), 'Office consumption is available in the office workflow.');
+        $balance = $this->record($user, StockBalance::class, (int) $data['id'], 'inventory.manage');
+        $year = FiscalYear::whereDate('starts_on', '<=', today())->whereDate('ends_on', '>=', today())->first();
+        $this->ensure($year !== null, 'Create an open fiscal year covering today before recording office use.');
+        $this->activeYear((int) $year->id);
+        $quantity = (string) $data['quantity'];
+        $this->ensure(Decimal::cmp($quantity, '0') > 0 && Decimal::cmp($quantity, $balance->quantity) <= 0, 'Office use must be positive and cannot exceed the stock on hand.', 'quantity');
+        $this->ensure(filled($data['recipient'] ?? null) && filled($data['reason'] ?? null), 'Record the recipient and reason for office use.');
+        $movement = $this->move($user, $balance, Decimal::sub('0', $quantity), 'consumption', $balance, 'Used by '.$data['recipient'].': '.$data['reason']);
+        $this->audit($user, $movement, 'stock.consumed', [], $data['reason'], (int) $balance->funding_source_id);
+
+        return $movement;
     }
 
     /** @param array<string, mixed> $data */
@@ -638,6 +766,7 @@ final class WorkflowService
     {
         $order = $this->record($user, PurchaseOrder::class, (int) $data['id'], 'inventory.manage');
         $this->ensure(in_array($order->status, ['ordered', 'partially_received'], true), 'Only approved orders with outstanding deliveries can be received.');
+        $request = OfficeWorkflow::enabled() ? ItemRequest::whereKey($order->item_request_id)->lockForUpdate()->firstOrFail() : null;
         $receipt = GoodsReceipt::create(['reference' => 'GRN-'.Str::upper(Str::random(10)), 'purchase_order_id' => $order->id, 'funding_source_id' => $order->funding_source_id, 'warehouse_id' => $data['warehouse_id'], 'received_by' => $user->id, 'delivery_reference' => $data['delivery_reference'], 'created_at' => now()]);
         $seen = [];
         foreach (collect($this->commandLines($data))->sortBy('line_id') as $input) {
@@ -650,9 +779,19 @@ final class WorkflowService
             $balance = $this->balance((int) $order->funding_source_id, (int) $data['warehouse_id'], (int) $line->item_id);
             $this->move($user, $balance, $quantity, 'receipt', $receipt, $data['delivery_reference']);
             $line->update(['received_quantity' => Decimal::add($line->received_quantity, $quantity)]);
+            if ($request?->channel === 'cash') {
+                $requestLine = $request->lines()->whereKey($line->item_request_line_id)->lockForUpdate()->firstOrFail();
+                $received = Decimal::add($requestLine->received_quantity, $quantity);
+                $this->ensure(Decimal::cmp($received, $requestLine->quantity) <= 0, 'Outside deliveries exceed the cash request quantity.');
+                $requestLine->update(['received_quantity' => $received]);
+            }
         }
         $complete = $order->lines()->get()->every(fn ($line) => Decimal::cmp($line->quantity, $line->received_quantity) === 0);
         $order->update(['status' => $complete ? 'received' : 'partially_received']);
+        if ($request?->channel === 'cash') {
+            $cashComplete = $request->lines()->get()->every(fn ($line) => Decimal::cmp($line->quantity, $line->received_quantity) === 0);
+            $request->update(['status' => $cashComplete ? 'fulfilled' : 'partially_fulfilled']);
+        }
         $this->audit($user, $receipt, 'goods.received');
 
         return $receipt;
@@ -830,7 +969,7 @@ final class WorkflowService
         $count = $this->record($user, InventoryCount::class, (int) $data['id'], 'inventory.manage');
         $this->ensure((int) $count->counter_id === $user->id && $count->status === 'counting', 'Only the assigned counter can submit an in-progress count.');
         $this->ensure(! $count->lines()->whereNull('physical_quantity')->exists() && $count->lines()->exists(), 'Encode all items before submission.');
-        $count->update(['status' => 'submitted']);
+        $count->update(['status' => OfficeWorkflow::enabled() ? 'approved' : 'submitted', 'approved_at' => OfficeWorkflow::enabled() ? now() : null]);
         $this->audit($user, $count, 'count.submitted');
 
         return $count;

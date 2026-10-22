@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    within,
+} from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import StockNest from '../../resources/js/pages/stocknest';
@@ -177,5 +183,106 @@ describe('Workspace server sorting', () => {
                 .getByRole('columnheader', { name: 'Item name' })
                 .getAttribute('aria-sort'),
         ).toBe('descending');
+    });
+});
+
+describe('Office Supply tracking', () => {
+    it('shows the office workflow without the internal approval workspace', () => {
+        render(
+            <StockNest
+                {...props}
+                officeWorkflow
+                auth={{ ...props.auth, permissions: ['*'] }}
+            />,
+        );
+        expect(
+            screen.queryByRole('link', { name: 'Approval center' }),
+        ).toBeNull();
+        expect(
+            screen.getByRole('link', { name: 'Approved annual items' }),
+        ).toBeTruthy();
+        expect(
+            screen.getByRole('link', { name: 'Outside purchases' }),
+        ).toBeTruthy();
+    });
+
+    it('shows approved, submitted, received and remaining quantities independently', () => {
+        render(
+            <StockNest
+                {...props}
+                officeWorkflow
+                page={{ ...props.page, key: 'projections' }}
+                allowanceRows={[
+                    {
+                        item_id: 1,
+                        item: 'Copy paper',
+                        unit: 'Ream',
+                        fund: 'GAA',
+                        year: 2026,
+                        approved_quantity: '100.0000',
+                        requested_quantity: '25.0000',
+                        received_quantity: '10.0000',
+                        remaining_quantity: '75.0000',
+                    },
+                ]}
+            />,
+        );
+        const allowance = screen.getByRole('region', {
+            name: 'Annual Supply allowance',
+        });
+        expect(
+            within(allowance).getByRole('columnheader', {
+                name: 'Left to request',
+            }),
+        ).toBeTruthy();
+        const row = within(allowance).getByRole('row', { name: /Copy paper/ });
+        expect(
+            within(row)
+                .getAllByRole('cell')
+                .map((cell) => cell.textContent),
+        ).toEqual(['Ream', 'GAA', '2026', '100', '25', '10', '75']);
+        expect(
+            within(allowance).getByText(
+                /Outside cash purchases are tracked separately/,
+            ),
+        ).toBeTruthy();
+    });
+
+    it('shows monthly Supply activity separately from outside receipts', () => {
+        render(
+            <StockNest
+                {...props}
+                officeWorkflow
+                page={{ ...props.page, key: 'overview' }}
+                monthlyStats={[
+                    {
+                        month: '2026-10',
+                        item: 'Copy paper',
+                        unit: 'Ream',
+                        fund: 'GAA',
+                        requested_quantity: '5',
+                        received_quantity: '3',
+                        outside_quantity: '2',
+                        outside_received_quantity: '1',
+                    },
+                ]}
+            />,
+        );
+        const activity = screen.getByRole('region', {
+            name: 'Monthly item statistics',
+        });
+        expect(
+            within(activity).getByRole('columnheader', {
+                name: 'Requested from Supply',
+            }),
+        ).toBeTruthy();
+        expect(
+            within(activity).getByRole('columnheader', {
+                name: 'Outside items received',
+            }),
+        ).toBeTruthy();
+        expect(
+            within(activity).getByRole('row', { name: /2026-10 Copy paper/ }),
+        ).toBeTruthy();
     });
 });

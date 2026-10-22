@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Administration;
 
+use App\Domain\OfficeWorkflow;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
@@ -10,6 +11,9 @@ class UserAccessRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {
+        if (OfficeWorkflow::enabled()) {
+            $this->merge(['department_id' => OfficeWorkflow::departmentId()]);
+        }
         if ($this->has('email')) {
             $this->merge(['email' => mb_strtolower(trim((string) $this->input('email')))]);
         }

@@ -66,7 +66,7 @@ function concurrentIssuances(array $fixture, bool $duplicate): array
     $key = (string) Str::uuid();
     $processes = [];
     $connection = config('database.connections.pgsql');
-    $environment = ['APP_ENV' => 'testing', 'DB_CONNECTION' => 'pgsql', 'DB_DATABASE' => $connection['database'], 'DB_HOST' => $connection['host'], 'DB_PORT' => (string) $connection['port'], 'DB_USERNAME' => $connection['username'], 'DB_PASSWORD' => $connection['password'], 'APP_KEY' => config('app.key'), 'CACHE_STORE' => 'array', 'QUEUE_CONNECTION' => 'sync', 'SESSION_DRIVER' => 'array', 'MAIL_MAILER' => 'array'];
+    $environment = ['APP_ENV' => 'testing', 'STOCKNEST_OFFICE_WORKFLOW' => 'false', 'DB_CONNECTION' => 'pgsql', 'DB_DATABASE' => $connection['database'], 'DB_HOST' => $connection['host'], 'DB_PORT' => (string) $connection['port'], 'DB_USERNAME' => $connection['username'], 'DB_PASSWORD' => $connection['password'], 'APP_KEY' => config('app.key'), 'CACHE_STORE' => 'array', 'QUEUE_CONNECTION' => 'sync', 'SESSION_DRIVER' => 'array', 'MAIL_MAILER' => 'array'];
     try {
         foreach ([0, 1] as $index) {
             $process = new Process([PHP_BINARY, base_path('tests/Support/issue-worker.php'), (string) $fixture['requests'][$duplicate ? 0 : $index], (string) $fixture['users']['custodian']->id, (string) $fixture['warehouse']->id, $duplicate ? $key : (string) Str::uuid(), $barrier], base_path(), $environment);

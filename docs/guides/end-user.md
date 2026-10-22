@@ -1,3 +1,5 @@
+For the current Office of the Vice President for Academic Affairs system, follow the [office workflow guide](../office-workflow.md). The institutional planning and approval procedures below are historical reference.
+
 # End-user workflows
 
 This guide describes the target StockNest workflow. Screens/actions become available as their modules are implemented; the root README records the delivered scope. Your available actions depend on your role, department, funding source and approval assignment.

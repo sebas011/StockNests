@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\OfficeWorkflow;
 use App\Models\Department;
 use App\Models\FundingSource;
 use App\Models\User;
@@ -38,7 +39,7 @@ class CreateAdministrator extends Command
         }
         DB::transaction(function () use ($data) {
             $user = User::create($data);
-            $user->forceFill(['email_verified_at' => now(), 'is_active' => true, 'department_id' => Department::query()->value('id')])->save();
+            $user->forceFill(['email_verified_at' => now(), 'is_active' => true, 'department_id' => OfficeWorkflow::enabled() ? OfficeWorkflow::departmentId() : Department::query()->value('id')])->save();
             $user->assignRole('Super Administrator');
             $user->fundingSources()->sync(FundingSource::query()->pluck('id'));
             DB::table('audit_logs')->insert([

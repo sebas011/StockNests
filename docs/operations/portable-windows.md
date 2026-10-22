@@ -20,6 +20,8 @@ If the browser does not open automatically, use the local address displayed in t
 
 Email delivery is disabled by default for offline use, so password reset links are not emailed unless mail delivery is configured. Keep your administrator password safe.
 
+For approved annual items, Supply requests, outside cash purchases and monthly tracking, follow the [office workflow guide](../office-workflow.md).
+
 ## Everyday use
 
 Open **Start StockNest.cmd** from the same extracted folder. Your existing accounts and records load automatically. StockNest continues running in the background after the launcher window closes.

@@ -208,6 +208,19 @@ const workflows: Record<string, string[]> = {
     counts: ['Counting', 'Submitted', 'Approved', 'Reconciled', 'Closed'],
 };
 
+const officeWorkflows: Record<string, string[]> = {
+    projections: ['Externally approved', 'Encoded', 'Approved revisions'],
+    requests: ['Draft', 'Submitted', 'Partially received', 'Fulfilled'],
+    purchasing: [
+        'Cash authority recorded',
+        'Ordered',
+        'Partially received',
+        'Received',
+        'Closed',
+    ],
+    counts: ['Counting', 'Finalized', 'Reconciled'],
+};
+
 export function RecordDetails({
     row,
     open,
@@ -216,6 +229,7 @@ export function RecordDetails({
     section,
     currency,
     timezone,
+    officeWorkflow = false,
 }: {
     row: WorkspaceRow | null;
     open: boolean;
@@ -224,9 +238,14 @@ export function RecordDetails({
     section: string;
     currency: string;
     timezone: string;
+    officeWorkflow?: boolean;
 }) {
-    const status = row?.status;
-    const steps = workflows[section];
+    const status = officeWorkflow ? (row?.state ?? row?.status) : row?.status;
+    const steps = officeWorkflow
+        ? section === 'requests' && row?.channel === 'Outside cash purchase'
+            ? ['Draft', 'Cash requested', 'Outside purchase', 'Received']
+            : officeWorkflows[section]
+        : workflows[section];
     const details =
         row?.details ??
         Object.fromEntries(
@@ -280,8 +299,9 @@ export function RecordDetails({
                                 ))}
                             </ol>
                             <p>
-                                Approvals and inventory movements are recorded
-                                as separate transactions.
+                                {officeWorkflow
+                                    ? 'External approvals, Supply submissions, deliveries and office use are recorded separately.'
+                                    : 'Approvals and inventory movements are recorded as separate transactions.'}
                             </p>
                         </section>
                     )}

@@ -166,7 +166,7 @@ export function formatMoney(value: unknown, currency = 'PHP'): string {
 export function formatNumber(value: unknown): string {
     const amount = Number(value);
     return Number.isFinite(amount)
-        ? new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(
+        ? new Intl.NumberFormat('en-PH', { maximumFractionDigits: 4 }).format(
               amount,
           )
         : '—';

@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property numeric-string $quantity
  * @property numeric-string $approved_quantity
  * @property numeric-string $fulfilled_quantity
+ * @property numeric-string $received_quantity
  * @property numeric-string $unit_price
  */
 #[UsePolicy(StockNestPolicy::class)]

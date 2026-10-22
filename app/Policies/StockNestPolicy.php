@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Domain\Access;
+use App\Domain\OfficeWorkflow;
 use App\Models\AnnualProjection;
 use App\Models\ApprovalDecision;
 use App\Models\AuditLog;
@@ -23,6 +24,8 @@ use App\Models\StockIssuance;
 use App\Models\StockIssuanceLine;
 use App\Models\StockMovement;
 use App\Models\StockReservation;
+use App\Models\SupplyReceipt;
+use App\Models\SupplyReceiptLine;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 
@@ -41,10 +44,13 @@ final class StockNestPolicy
             $record instanceof ProjectionLine => [$record->projection],
             $record instanceof ItemRequestLine => [$record->request],
             $record instanceof PurchaseOrderLine => [$record->order],
+            $record instanceof PurchaseOrder && OfficeWorkflow::enabled() => [$record->request],
             $record instanceof GoodsReceiptLine => [$record->receipt],
+            $record instanceof SupplyReceiptLine => [$record->receipt, $record->requestLine],
             $record instanceof InventoryCountLine => [$record->count],
             $record instanceof StockIssuanceLine => [$record->issuance],
             $record instanceof GoodsReceipt => [$record->order],
+            $record instanceof SupplyReceipt => [$record->request],
             $record instanceof StockIssuance => [$record->request],
             $record instanceof ApprovalDecision => [$this->approvalSubject($record)],
             default => [],
@@ -57,14 +63,14 @@ final class StockNestPolicy
         if ($record instanceof AuditLog && (! $user->can('audit.view') || ($record->funding_source_id === null && FundingSource::whereNotIn('id', $user->fundingSources()->select('funding_sources.id'))->exists()))) {
             return false;
         }
-        if ($record instanceof ItemRequest && Access::departmentLimited($user) && $user->hasRole('Department Requester') && ! $user->hasRole('Department Head') && (int) $record->created_by !== $user->id) {
+        if ($record instanceof ItemRequest && Access::ownRequestsOnly($user) && (int) $record->created_by !== $user->id) {
             return false;
         }
 
         $fund = $record->getAttribute('funding_source_id');
         $department = $record->getAttribute('department_id');
 
-        return (! $fund || in_array((int) $fund, Access::fundIds($user), true)) && (! $department || ! Access::departmentLimited($user) || (int) $department === (int) $user->department_id);
+        return (! $fund || in_array((int) $fund, Access::fundIds($user), true)) && (! $department || OfficeWorkflow::enabled() || ! Access::departmentLimited($user) || (int) $department === (int) $user->department_id);
     }
 
     public function approve(User $user, Model $record): bool

@@ -1,3 +1,5 @@
+For the current Office of the Vice President for Academic Affairs system, follow the [office workflow guide](../office-workflow.md). The institutional planning and approval procedures below are historical reference.
+
 # Administrator guide
 
 This guide describes the intended operating workflow. Use only actions actually present in the delivered release; consult the root README for implemented scope and verification. Configuration grants access and authority, so changes must be attributed, reasoned and auditable.

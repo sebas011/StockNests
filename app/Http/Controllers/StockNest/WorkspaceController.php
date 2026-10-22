@@ -4,6 +4,7 @@ namespace App\Http\Controllers\StockNest;
 
 use App\Domain\Access;
 use App\Domain\Decimal;
+use App\Domain\OfficeWorkflow;
 use App\Domain\WorkflowService;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StockNest\WorkflowRequest;
@@ -86,7 +87,8 @@ final class WorkspaceController extends Controller
         $this->request = $request;
         $this->sortColumns = [];
         $this->acceptedSort = [];
-        $this->approvalRoles = $this->workflow->approvalRoles();
+        $this->approvalRoles = OfficeWorkflow::enabled() ? [] : $this->workflow->approvalRoles();
+        abort_if(OfficeWorkflow::enabled() && $section === 'approvals', 404);
         $permission = ['overview' => 'dashboard.view', 'funding' => 'budgets.manage', 'catalog' => 'dashboard.view', 'projections' => 'dashboard.view', 'requests' => 'dashboard.view', 'purchasing' => 'procurement.manage', 'inventory' => 'inventory.manage', 'counts' => 'inventory.manage', 'approvals' => 'requests.approve', 'reports' => 'reports.view', 'audit' => 'audit.view', 'administration' => 'users.manage'][$section] ?? null;
         abort_unless($permission !== null, 404);
         if ($section === 'purchasing') {
@@ -105,7 +107,9 @@ final class WorkspaceController extends Controller
         }
         $funds = $this->actor->fundingSources()->where('is_active', true)->get();
         $departments = Department::where('is_active', true);
-        if (Access::departmentLimited($this->actor)) {
+        if (OfficeWorkflow::enabled()) {
+            $departments->whereKey(OfficeWorkflow::departmentId());
+        } elseif (Access::departmentLimited($this->actor)) {
             $departments->whereKey($this->actor->department_id);
         }
         $this->options = [
@@ -120,7 +124,7 @@ final class WorkspaceController extends Controller
             default => abort(404),
         };
 
-        return Inertia::render('stocknest', $data + ['funds' => $funds->map(fn ($f) => ['id' => $f->id, 'label' => $f->code])->all(), 'selectedFund' => (string) $request->input('fund_id', ''), 'filters' => $request->only(['q', 'status', 'fund_id', 'date_from', 'date_to']) + $this->acceptedSort]);
+        return Inertia::render('stocknest', $data + ['officeWorkflow' => OfficeWorkflow::enabled(), 'organization' => OfficeWorkflow::enabled() ? OfficeWorkflow::NAME : config('stocknest.organization'), 'funds' => $funds->map(fn ($f) => ['id' => $f->id, 'label' => $f->code])->all(), 'selectedFund' => (string) $request->input('fund_id', ''), 'filters' => $request->only(['q', 'status', 'fund_id', 'date_from', 'date_to']) + $this->acceptedSort]);
     }
 
     /**
@@ -309,14 +313,16 @@ final class WorkspaceController extends Controller
         $funds = $this->totals((int) now()->year);
         $recent = $this->can('audit.view') ? $this->query(AuditLog::class)->with('user')->latest('id')->limit(8)->get() : collect();
         $requestQuery = $this->query(ItemRequest::class, true);
-        $pending = (clone $requestQuery)->whereIn('status', ['submitted', 'pending_review'])->count();
+        $pending = OfficeWorkflow::enabled()
+            ? (clone $requestQuery)->where('channel', 'supply')->whereIn('status', ['submitted', 'partially_received'])->count()
+            : (clone $requestQuery)->whereIn('status', ['submitted', 'pending_review'])->count();
         $balances = $this->query(StockBalance::class)->with('item')->get();
         $metrics = [
             ['label' => 'Authorized allocation', 'value' => Decimal::sum(array_column($funds, 'allocation')), 'format' => 'money', 'helper' => 'Approved spending authority'],
             ['label' => 'Committed', 'value' => Decimal::sum(array_column($funds, 'committed')), 'format' => 'money', 'helper' => 'Open purchase obligations'],
             ['label' => 'Actual expenditure', 'value' => Decimal::sum(array_column($funds, 'spent')), 'format' => 'money', 'helper' => 'Recorded payments'],
             ['label' => 'Available budget', 'value' => Decimal::sum(array_column($funds, 'available')), 'format' => 'money', 'helper' => 'Allocation less obligations and spending'],
-            ['label' => 'Pending requests', 'value' => $pending, 'helper' => 'Awaiting review'],
+            ['label' => OfficeWorkflow::enabled() ? 'Awaiting Supply' : 'Pending requests', 'value' => $pending, 'helper' => OfficeWorkflow::enabled() ? 'Submitted requests awaiting all items' : 'Awaiting review'],
             ['label' => 'Low stock lines', 'value' => $balances->filter(fn ($b) => Decimal::cmp($b->quantity, $b->item->reorder_point) <= 0)->count(), 'helper' => 'At or below reorder point'],
             ['label' => 'Inventory value estimate', 'value' => Decimal::sum($balances->map(fn ($b) => Decimal::mul($b->quantity, $b->item->standard_cost))), 'format' => 'money', 'helper' => 'Current quantity × catalog standard cost'],
             ['label' => 'Open purchase orders', 'value' => $this->query(PurchaseOrder::class, true)->whereIn('status', ['draft', 'ordered', 'partially_received', 'received'])->count(), 'helper' => 'Receiving or settlement outstanding'],
@@ -330,15 +336,21 @@ final class WorkspaceController extends Controller
             $chart[] = ['month' => now()->startOfYear()->month($month)->format('M'), 'projected' => Decimal::sum($scheduledLines->filter(fn ($line) => (int) $line->planned_month === $month)->pluck('total')), 'actual' => Decimal::sum($entries->filter(fn ($e) => (int) $e->created_at?->format('n') === $month && (int) $e->created_at?->format('Y') === (int) now()->format('Y'))->pluck('expenditure_delta'))];
         }
         $chartYear = (int) now()->year;
+        $officeData = [];
+        if (OfficeWorkflow::enabled()) {
+            $fundId = $this->request->filled('fund_id') ? $this->request->integer('fund_id') : null;
+            $yearId = FiscalYear::where('year', $chartYear)->value('id');
+            $officeData = ['allowanceRows' => $yearId !== null ? OfficeWorkflow::allowanceRows($this->actor, $fundId, (int) $yearId) : [], 'monthlyStats' => OfficeWorkflow::monthlyRows($this->actor, $fundId, $chartYear)];
+        }
 
-        return $this->page('overview', 'Your inventory, in balance.', 'Live fund obligations, stock, and approvals in one workspace.', ['fund' => 'Funding source', 'original' => ['Original plan', 'money'], 'revised' => ['Revised plan', 'money'], 'allocation' => ['Allocation', 'money'], 'committed' => ['Committed', 'money'], 'spent' => ['Spent', 'money'], 'available' => ['Available', 'money']], array_map(fn ($f) => ['fund' => $f['name']] + $f, $funds)) + ['fiscalYear' => $chartYear, 'metrics' => $metrics, 'budgetFunds' => $funds, 'chartData' => $chart, 'activity' => $recent->map(fn ($a) => ['id' => $a->id, 'title' => str_replace('.', ' · ', $a->action), 'description' => ($a->user->name ?? 'System').' · record '.$a->subject_id, 'date' => $a->created_at?->toIso8601String(), 'type' => Str::before($a->action, '.')])->all(), 'notices' => count($funds) ? [] : [['title' => 'Set up your annual allocations', 'description' => 'Budget officers submit allocation changes; a separate fund approver authorizes them.', 'tone' => 'info']]];
+        return $this->page('overview', 'Your inventory, in balance.', OfficeWorkflow::enabled() ? 'Track approved annual items, Supply requests, outside purchases, and office stock.' : 'Live fund obligations, stock, and approvals in one workspace.', ['fund' => 'Funding source', 'original' => ['Original plan', 'money'], 'revised' => ['Revised plan', 'money'], 'allocation' => ['Allocation', 'money'], 'committed' => ['Committed', 'money'], 'spent' => ['Spent', 'money'], 'available' => ['Available', 'money']], array_map(fn ($f) => ['fund' => $f['name']] + $f, $funds)) + ['fiscalYear' => $chartYear, 'metrics' => $metrics, 'budgetFunds' => $funds, 'chartData' => $chart, 'activity' => $recent->map(fn ($a) => ['id' => $a->id, 'title' => str_replace('.', ' · ', $a->action), 'description' => ($a->user->name ?? 'System').' · record '.$a->subject_id, 'date' => $a->created_at?->toIso8601String(), 'type' => Str::before($a->action, '.')])->all(), 'notices' => count($funds) ? [] : [['title' => 'Set up your annual allocations', 'description' => OfficeWorkflow::enabled() ? 'Encode the funding already approved for your office, then add the annual items approved by Supply.' : 'Budget officers submit allocation changes; a separate fund approver authorizes them.', 'tone' => 'info']]] + $officeData;
     }
 
     /** @return list<array<string, mixed>> */
     private function scopeFields(bool $department = true): array
     {
         $fields = [$this->select('funding_source_id', 'Funding source', 'fund'), $this->select('fiscal_year_id', 'Fiscal year', 'year')];
-        if ($department) {
+        if ($department && ! OfficeWorkflow::enabled()) {
             $fields[] = $this->select('department_id', 'Department', 'department');
         }
 
@@ -348,6 +360,12 @@ final class WorkspaceController extends Controller
     /** @return array<string, mixed> */
     private function funding(): array
     {
+        if (OfficeWorkflow::enabled()) {
+            $funds = $this->totals();
+
+            return $this->page('funding', 'Funding & budgets', 'Record approved GAA and APPCSE funding. Outside purchases and payments remain separately traceable.', ['fund' => 'Fund / fiscal year', 'original' => ['Original plan', 'money'], 'revised' => ['Current plan', 'money'], 'allocation' => ['Authorized', 'money'], 'committed' => ['Committed', 'money'], 'spent' => ['Spent', 'money'], 'available' => ['Available', 'money']], array_map(fn ($fund) => ['fund' => $fund['name']] + $fund, $funds)) + ['budgetFunds' => $funds, 'createForm' => $this->form('Record approved allocation', 'allocation.create', [...$this->scopeFields(false), $this->field('amount', 'Amount to add / reduce', 'number', true, null, 'Enter the approved change. A negative amount reduces the allocation.'), $this->field('reason', 'Approved funding reference / authority', 'textarea')])];
+        }
+
         $funds = $this->totals();
         $adjustments = BudgetAdjustment::whereHas('allocation', fn ($q) => $q->whereIn('funding_source_id', Access::fundIds($this->actor)))->with('allocation.fund')->latest()->limit(30)->get();
 
@@ -407,6 +425,10 @@ final class WorkspaceController extends Controller
             $defaults['original_projection_id'] = $record->original_projection_id ?? $record->getKey();
         }
 
+        if (OfficeWorkflow::enabled()) {
+            return $this->form($amend ? 'Record approved plan revision' : 'Encode approved annual items', 'projection.save', [...$this->scopeFields(), $this->field('justification', 'Supply approval reference / details', 'textarea')], $defaults, [$this->select('item_id', 'Approved item', 'item'), $this->field('quantity', 'Approved annual quantity', 'number'), $this->field('unit_price', 'Approved estimated unit price', 'number'), $this->field('planned_month', 'Planned month (1–12)', 'number', false), $this->field('remarks', 'Line remarks', 'text', false)]);
+        }
+
         return $this->form($amend ? 'Create projection amendment' : ($record ? 'Edit projection draft' : 'Create annual projection'), 'projection.save', [...$this->scopeFields(), $this->field('justification', 'Planning justification', 'textarea')], $defaults, [$this->select('item_id', 'Item', 'item'), $this->field('quantity', 'Estimated annual quantity', 'number'), $this->field('unit_price', 'Estimated unit price', 'number'), $this->field('planned_month', 'Planned month (1–12)', 'number', false), $this->field('remarks', 'Line remarks', 'text', false)]);
     }
 
@@ -433,6 +455,17 @@ final class WorkspaceController extends Controller
     /** @return array<string, mixed> */
     private function projections(): array
     {
+        if (OfficeWorkflow::enabled()) {
+            [$records, $pagination] = $this->listing($this->query(AnnualProjection::class, true)->with('fund', 'fiscalYear', 'lines.item'));
+            $rows = $records->map(fn ($record) => ['id' => $record->id, 'reference' => $record->reference, 'fund' => $record->fund->code, 'year' => $record->fiscalYear->year, 'revision' => $record->revision, 'total' => $record->total, 'status' => $record->status, 'details' => ['approval_reference' => $record->justification, 'lines' => $this->lineDetails($record->lines)], 'actions' => $this->can('budgets.manage') && $record->status === 'approved' ? [$this->action('Record approved revision', $this->planForm($record, true))] : []])->all();
+            $data = $this->page('projections', 'Approved annual items', 'Encode the annual items already approved by Supply. Submitted Supply requests reduce the remaining allowance; outside purchases are separate.', ['reference' => 'Reference', 'fund' => 'Fund', 'year' => 'Year', 'revision' => 'Revision', 'total' => ['Estimated total', 'money'], 'status' => ['Status', 'status']], $rows, $pagination);
+            if ($this->can('budgets.manage')) {
+                $data['createForm'] = $this->planForm();
+            }
+
+            return $data + ['allowanceRows' => OfficeWorkflow::allowanceRows($this->actor, $this->request->filled('fund_id') ? $this->request->integer('fund_id') : null)];
+        }
+
         [$records, $pagination] = $this->listing($this->query(AnnualProjection::class, true)->with('fund', 'department', 'fiscalYear', 'lines.item'));
         $this->prepareContext($records);
         $rows = $records->map(function ($r) {
@@ -538,9 +571,13 @@ final class WorkspaceController extends Controller
     /** @return array<string, mixed> */
     private function requestForm(?ItemRequest $record = null): array
     {
-        $defaults = ($record?->toArray() ?? []) + ['required_on' => now()->addDays(7)->format('Y-m-d'), 'priority' => 'normal'];
+        $defaults = ($record?->toArray() ?? []) + ['required_on' => now()->addDays(7)->format('Y-m-d'), 'priority' => 'normal', 'channel' => 'supply'];
         if ($record) {
             $defaults['lines'] = $record->lines->map(fn ($l) => $l->only(['item_id', 'quantity', 'unit_price']))->all();
+        }
+
+        if (OfficeWorkflow::enabled()) {
+            return $this->form($record ? 'Edit request draft' : 'Create item request', 'request.save', [...$this->scopeFields(), $this->field('channel', 'Request type', 'select', true, [['value' => 'supply', 'label' => 'Request items from Supply'], ['value' => 'cash', 'label' => 'Cash request for outside purchase']]), $this->field('required_on', 'Needed by', 'date'), $this->field('purpose', 'Purpose / reason Supply cannot provide the items', 'textarea')], $defaults, [$this->select('item_id', 'Item', 'item'), $this->field('quantity', 'Requested quantity', 'number'), $this->field('unit_price', 'Estimated unit price', 'number')]);
         }
 
         return $this->form($record ? 'Edit request draft' : 'Create item request', 'request.save', [...$this->scopeFields(), $this->field('required_on', 'Required fulfillment date', 'date'), $this->field('purpose', 'Purpose / justification', 'textarea'), $this->field('priority', 'Priority', 'select', true, array_map(fn ($p) => ['value' => $p, 'label' => ucfirst($p)], ['low', 'normal', 'high', 'urgent']))], $defaults, [$this->select('item_id', 'Item', 'item'), $this->field('quantity', 'Requested quantity', 'number'), $this->field('unit_price', 'Estimated unit price', 'number')]);
@@ -549,6 +586,10 @@ final class WorkspaceController extends Controller
     /** @return array<string, mixed> */
     private function requestRow(ItemRequest $r): array
     {
+        if (OfficeWorkflow::enabled()) {
+            return $this->officeRequestRow($r);
+        }
+
         $actions = [];
         $canEditRequest = $this->can('requests.create') && ((int) $r->created_by === $this->actor->id || $this->can('users.manage'));
         $lineOptions = $r->lines->map(fn ($l) => ['value' => (string) $l->id, 'label' => $l->item->name.' · outstanding '.Decimal::sub($l->approved_quantity, $l->fulfilled_quantity)])->all();
@@ -578,10 +619,87 @@ final class WorkspaceController extends Controller
     }
 
     /** @return array<string, mixed> */
+    private function officeRequestRow(ItemRequest $record): array
+    {
+        $actions = [];
+        $supply = $record->getAttribute('channel') === 'supply';
+        $purchaseOptions = [];
+        $hasOutsideOrders = false;
+        $state = $record->status;
+        if (! $supply) {
+            $orders = $record->purchaseOrders->where('status', '<>', 'canceled');
+            $hasOutsideOrders = $orders->isNotEmpty();
+            $orderedQuantities = [];
+            foreach ($orders as $order) {
+                foreach ($order->lines as $purchaseLine) {
+                    $lineId = (int) $purchaseLine->item_request_line_id;
+                    $orderedQuantities[$lineId] = Decimal::add($orderedQuantities[$lineId] ?? '0', $purchaseLine->quantity);
+                }
+            }
+            foreach ($record->lines as $line) {
+                $remaining = Decimal::sub($line->quantity, $orderedQuantities[$line->id] ?? '0');
+                if (Decimal::cmp($remaining, '0') > 0) {
+                    $purchaseOptions[] = ['value' => (string) $line->id, 'label' => $line->item->name.' · not yet ordered '.$remaining];
+                }
+            }
+            $state = match ($record->status) {
+                'approved' => $hasOutsideOrders ? 'outside_ordered' : 'cash_requested',
+                'partially_fulfilled' => 'partially_received',
+                'fulfilled' => 'received',
+                default => $record->status,
+            };
+        }
+        $canEdit = $this->can('requests.create') && ((int) $record->created_by === $this->actor->id || $this->can('users.manage'));
+        if ($canEdit && in_array($record->status, ['draft', 'returned'], true)) {
+            $actions[] = $this->action('Edit draft', $this->requestForm($record));
+            $label = $supply ? 'Submit to Supply' : 'Record cash request';
+            $actions[] = $this->action($label, $this->form($label, 'request.submit', [], ['id' => $record->id]), 'primary');
+        }
+        if ($supply && $this->can('inventory.manage') && in_array($record->status, ['submitted', 'partially_received'], true)) {
+            $lines = $record->lines->filter(fn ($line) => Decimal::cmp($line->quantity, (string) $line->getAttribute('received_quantity')) > 0);
+            $actions[] = $this->action('Record Supply receipt', $this->form('Record Supply receipt', 'supply.receive', [$this->select('warehouse_id', 'Office storage location', 'warehouse'), $this->field('delivery_reference', 'Supply issuance / delivery reference')], ['id' => $record->id], [$this->field('line_id', 'Requested item', 'select', true, $lines->map(fn ($line) => ['value' => (string) $line->id, 'label' => $line->item->name.' · awaiting '.Decimal::sub($line->quantity, (string) $line->getAttribute('received_quantity'))])->values()->all()), $this->field('quantity', 'Quantity received', 'number')]), 'primary');
+        }
+        if (! $supply && $purchaseOptions !== [] && $this->can('procurement.manage') && in_array($record->status, ['approved', 'partially_fulfilled'], true)) {
+            $actions[] = $this->action('Record authorized outside purchase', $this->form('Record authorized outside purchase', 'purchase.create', [$this->select('supplier_id', 'Outside supplier', 'supplier'), $this->field('authorization_reference', 'Approved cash request / authority reference'), $this->field('remarks', 'Purchase details', 'textarea', false)], ['item_request_id' => $record->id], [$this->field('line_id', 'Requested item', 'select', true, $purchaseOptions), $this->field('quantity', 'Purchase quantity', 'number'), $this->field('unit_price', 'Actual purchase unit price', 'number')]), 'primary');
+        }
+        if ($canEdit && ! in_array($record->status, ['fulfilled', 'closed', 'canceled', 'rejected'], true)) {
+            $actions[] = $this->action('Cancel request', $this->form('Cancel request', 'request.cancel', [$this->field('reason', 'Cancellation reason', 'textarea')], ['id' => $record->id]), 'danger');
+        }
+
+        return ['id' => $record->id, 'reference' => $record->reference, 'fund' => $record->fund->code, 'channel' => $supply ? 'Supply items' : 'Outside cash purchase', 'requester' => $record->creator->name, 'required_on' => $record->required_on, 'estimated_total' => $record->estimated_total, 'status' => $record->status, 'state' => $state, 'details' => ['purpose' => $record->purpose, 'allowance_tracking' => $supply ? 'Submitted quantities use the approved annual allowance. Receipts increase office stock separately.' : 'Tracked separately from the Supply allowance. Record the external cash authority when entering the purchase.', 'lines' => $this->lineDetails($record->lines)], 'actions' => $actions];
+    }
+
+    /** @return array<string, mixed> */
+    private function officeInventory(): array
+    {
+        $query = $this->query(StockBalance::class)->with('fund', 'item', 'warehouse')->with(['movements' => fn ($query) => $query->latest('id')->limit(30)]);
+        if ($this->request->filled('q')) {
+            $term = '%'.$this->request->input('q').'%';
+            $query->whereHas('item', fn ($query) => $query->where('name', 'like', $term)->orWhere('sku', 'like', $term));
+        }
+        [$records, $pagination] = $this->listing($query, [], false);
+        $rows = $records->map(fn ($balance) => ['id' => $balance->id, 'sku' => $balance->item->sku, 'name' => $balance->item->name, 'fund' => $balance->fund->code, 'location' => $balance->warehouse->name, 'quantity' => $balance->quantity, 'status' => Decimal::cmp($balance->quantity, $balance->item->reorder_point) <= 0 ? 'low_stock' : 'available', 'details' => ['movement_history' => $balance->movements->map(fn ($movement) => ['kind' => $movement->kind, 'quantity' => $movement->quantity_delta, 'balance_after' => $movement->balance_after, 'remarks' => $movement->remarks, 'date' => $movement->created_at?->toIso8601String()])->all()], 'actions' => Decimal::cmp($balance->quantity, '0') > 0 ? [$this->action('Record office use', $this->form('Record office use', 'stock.consume', [$this->field('quantity', 'Quantity used', 'number'), $this->field('recipient', 'Used by / recipient'), $this->field('reason', 'Purpose / reason', 'textarea')], ['id' => $balance->id]))] : []])->all();
+
+        return $this->page('inventory', 'Office inventory', 'Supply receipts and outside purchases add stock. Record office use and physical counts to keep quantities current.', ['sku' => 'Code', 'name' => 'Item', 'fund' => 'Fund', 'location' => 'Location', 'quantity' => ['On hand', 'number'], 'status' => ['Stock status', 'status']], $rows, $pagination);
+    }
+
+    /** @return array<string, mixed> */
     private function requests(): array
     {
-        [$records, $pagination] = $this->listing($this->query(ItemRequest::class, true)->with('fund', 'department', 'creator', 'lines.item'));
+        $query = $this->query(ItemRequest::class, true)->with('fund', 'department', 'creator', 'lines.item');
+        if (OfficeWorkflow::enabled()) {
+            $query->with('purchaseOrders.lines');
+        }
+        [$records, $pagination] = $this->listing($query);
         $this->prepareContext($records);
+        if (OfficeWorkflow::enabled()) {
+            $data = $this->page('requests', 'Item requests', 'Submit requests to Supply against the annual allowance. Record receipts separately. Cash requests for outside purchases do not use the Supply allowance.', ['reference' => 'Request', 'fund' => 'Fund', 'channel' => 'Request type', 'requester' => 'Requested by', 'required_on' => ['Needed by', 'date'], 'estimated_total' => ['Estimate', 'money'], 'state' => ['Status', 'status']], $records->map(fn ($record) => $this->requestRow($record))->all(), $pagination);
+            if ($this->can('requests.create')) {
+                $data['createForm'] = $this->requestForm();
+            }
+
+            return $data;
+        }
         $data = $this->page('requests', 'Monthly requests', 'Requests pass through department and fund approval before fulfillment.', ['reference' => 'Request', 'fund' => 'Fund', 'department' => 'Department', 'requester' => 'Requested by', 'required_on' => ['Required on', 'date'], 'estimated_total' => ['Estimate', 'money'], 'planning' => 'Annual plan', 'status' => ['Status', 'status']], $records->map(fn ($r) => $this->requestRow($r))->all(), $pagination);
         if ($this->can('requests.create')) {
             $data['createForm'] = $this->requestForm();
@@ -594,7 +712,7 @@ final class WorkspaceController extends Controller
     private function purchaseRow(PurchaseOrder $r): array
     {
         $actions = [];
-        if ($this->canFundApprove($r) && $r->status === 'draft') {
+        if (! OfficeWorkflow::enabled() && $this->canFundApprove($r) && $r->status === 'draft') {
             $actions[] = $this->action('Approve purchase order', $this->form('Approve purchase order', 'purchase.approve', [$this->field('comment', 'Approval / budget exception comment', 'textarea', false)], ['id' => $r->id]), 'primary');
         }
         if ($this->can('inventory.manage') && in_array($r->status, ['ordered', 'partially_received'], true)) {
@@ -607,7 +725,7 @@ final class WorkspaceController extends Controller
             $actions[] = $this->action('Cancel order', $this->form('Cancel purchase order', 'purchase.cancel', [$this->field('reason', 'Reason', 'textarea')], ['id' => $r->id]), 'danger');
         }
 
-        return ['id' => $r->id, 'reference' => $r->reference, 'request' => $r->request->reference, 'fund' => $r->fund->code, 'supplier' => $r->supplier->name, 'total' => $r->total, 'committed_amount' => $r->committed_amount, 'spent_amount' => $r->spent_amount, 'status' => $r->status, 'details' => ['remarks' => $r->remarks, 'lines' => $this->lineDetails($r->lines), 'budget' => $this->recordBudget($r), 'receipts' => $r->receipts->map(fn ($receipt) => ['reference' => $receipt->reference, 'delivery_document' => $receipt->delivery_reference, 'date' => $receipt->created_at?->toIso8601String()])->all(), 'approval_history' => $this->decisions($r)], 'actions' => $actions];
+        return ['id' => $r->id, 'reference' => $r->reference, 'request' => $r->request->reference, 'fund' => $r->fund->code, 'supplier' => $r->supplier->name, 'total' => $r->total, 'committed_amount' => $r->committed_amount, 'spent_amount' => $r->spent_amount, 'status' => $r->status, 'details' => ['remarks' => $r->remarks, 'authorization_reference' => $r->getAttribute('authorization_reference'), 'lines' => $this->lineDetails($r->lines), 'budget' => $this->recordBudget($r), 'receipts' => $r->receipts->map(fn ($receipt) => ['reference' => $receipt->reference, 'delivery_document' => $receipt->delivery_reference, 'date' => $receipt->created_at?->toIso8601String()])->all(), 'approval_history' => $this->decisions($r)], 'actions' => $actions];
     }
 
     /** @return array<string, mixed> */
@@ -616,12 +734,16 @@ final class WorkspaceController extends Controller
         [$records, $pagination] = $this->listing($this->query(PurchaseOrder::class, true)->with('fund', 'request', 'supplier', 'lines.item', 'receipts'));
         $this->prepareContext($records);
 
-        return $this->page('purchasing', 'Procurement & purchasing', 'Approval commits budget. Receiving changes stock. Payments record actual expenditure.', ['reference' => 'Order', 'request' => 'Request', 'fund' => 'Fund', 'supplier' => 'Supplier', 'total' => ['Order total', 'money'], 'committed_amount' => ['Open commitment', 'money'], 'spent_amount' => ['Actual spending', 'money'], 'status' => ['Status', 'status']], $records->map(fn ($r) => $this->purchaseRow($r))->all(), $pagination);
+        return $this->page('purchasing', OfficeWorkflow::enabled() ? 'Outside purchases' : 'Procurement & purchasing', OfficeWorkflow::enabled() ? 'Record externally authorized cash purchases, receive the items, and record actual payments. Supply allowances remain unchanged.' : 'Approval commits budget. Receiving changes stock. Payments record actual expenditure.', ['reference' => 'Order', 'request' => 'Request', 'fund' => 'Fund', 'supplier' => 'Supplier', 'total' => ['Order total', 'money'], 'committed_amount' => ['Open commitment', 'money'], 'spent_amount' => ['Actual spending', 'money'], 'status' => ['Status', 'status']], $records->map(fn ($r) => $this->purchaseRow($r))->all(), $pagination);
     }
 
     /** @return array<string, mixed> */
     private function inventory(): array
     {
+        if (OfficeWorkflow::enabled()) {
+            return $this->officeInventory();
+        }
+
         $query = $this->query(StockBalance::class)->with('fund', 'item', 'warehouse')->with(['movements' => fn ($query) => $query->latest('id')->limit(30)])->withSum(['reservations as reserved' => fn ($query) => $query->where('status', 'active')], 'quantity');
         if ($this->request->filled('q')) {
             $term = '%'.$this->request->input('q').'%';
@@ -644,16 +766,16 @@ final class WorkspaceController extends Controller
         $actions = [];
         if ($this->can('inventory.manage') && (int) $r->counter_id === $this->actor->id && in_array($r->status, ['counting', 'returned'], true)) {
             $actions[] = $this->action('Encode / recount', $this->form('Save physical counts', 'count.encode', [], ['id' => $r->id, 'lines' => $r->lines->map(fn ($l) => ['line_id' => $l->id, 'physical_quantity' => $l->physical_quantity ?? '', 'variance_reason' => $l->variance_reason ?? ''])->all()], [$this->field('line_id', 'Count item', 'select', true, $r->lines->map(fn ($l) => ['value' => (string) $l->id, 'label' => $l->item->name.' · system at cutoff '.$l->system_quantity])->all()), $this->field('physical_quantity', 'Physical count at cutoff', 'number', true, null, 'Reconcile later movements on the manual count sheet before encoding.'), $this->field('variance_reason', 'Discrepancy reason', 'text', false)]));
-            $actions[] = $this->action('Submit count', $this->form('Submit count for review', 'count.submit', [], ['id' => $r->id]), 'primary');
+            $actions[] = $this->action(OfficeWorkflow::enabled() ? 'Finalize count' : 'Submit count', $this->form(OfficeWorkflow::enabled() ? 'Finalize physical count' : 'Submit count for review', 'count.submit', [], ['id' => $r->id]), 'primary');
         }
-        if ($this->can('counts.approve') && $r->status === 'submitted' && (int) $r->created_by !== $this->actor->id && (int) $r->counter_id !== $this->actor->id) {
+        if (! OfficeWorkflow::enabled() && $this->can('counts.approve') && $r->status === 'submitted' && (int) $r->created_by !== $this->actor->id && (int) $r->counter_id !== $this->actor->id) {
             $actions = [...$actions, ...$this->approvalForms($r, 'count.decide')];
         }
         if ($this->can('inventory.manage') && $r->status === 'approved') {
-            $actions[] = $this->action('Reconcile approved variance', $this->form('Apply approved reconciliation', 'count.reconcile', [], ['id' => $r->id]), 'primary');
+            $actions[] = $this->action(OfficeWorkflow::enabled() ? 'Reconcile stock variance' : 'Reconcile approved variance', $this->form(OfficeWorkflow::enabled() ? 'Apply stock reconciliation' : 'Apply approved reconciliation', 'count.reconcile', [], ['id' => $r->id]), 'primary');
         }
 
-        return ['id' => $r->id, 'reference' => $r->reference, 'fund' => $r->fund->code, 'location' => $r->warehouse->name, 'month' => $r->count_month, 'counter' => $r->counter->name, 'cutoff' => $r->cutoff_at?->toIso8601String(), 'status' => $r->status, 'details' => ['lines' => $this->lineDetails($r->lines), 'approval_history' => $this->decisions($r), 'reconciled_at' => $r->reconciled_at?->toIso8601String(), 'control' => 'Counts preserve a cutoff snapshot. Reconciliation applies only approved variance to the current balance, preserving later movements.'], 'actions' => $actions];
+        return ['id' => $r->id, 'reference' => $r->reference, 'fund' => $r->fund->code, 'location' => $r->warehouse->name, 'month' => $r->count_month, 'counter' => $r->counter->name, 'cutoff' => $r->cutoff_at?->toIso8601String(), 'status' => $r->status, 'details' => ['lines' => $this->lineDetails($r->lines), 'approval_history' => $this->decisions($r), 'reconciled_at' => $r->reconciled_at?->toIso8601String(), 'control' => OfficeWorkflow::enabled() ? 'The count keeps its cutoff snapshot. Finalize it before confirming reconciliation; later stock movements are preserved.' : 'Counts preserve a cutoff snapshot. Reconciliation applies only approved variance to the current balance, preserving later movements.'], 'actions' => $actions];
     }
 
     /** @return array<string, mixed> */
@@ -663,7 +785,7 @@ final class WorkspaceController extends Controller
         $this->prepareContext($records);
         $users = User::where('is_active', true)->whereHas('fundingSources', fn ($q) => $q->whereIn('funding_sources.id', Access::fundIds($this->actor)))->permission('inventory.manage')->get()->map(fn ($u) => ['value' => (string) $u->id, 'label' => $u->name])->all();
 
-        return $this->page('counts', 'Physical inventory', 'Count first, review discrepancies, then explicitly reconcile approved variances.', ['reference' => 'Count', 'fund' => 'Fund', 'location' => 'Location', 'month' => ['Count month', 'date'], 'counter' => 'Assigned counter', 'cutoff' => ['Snapshot cutoff', 'date'], 'status' => ['Status', 'status']], $records->map(fn ($r) => $this->countRow($r))->all(), $pagination) + ['createForm' => $this->form('Start monthly count', 'count.create', [...$this->scopeFields(false), $this->select('warehouse_id', 'Counting location', 'warehouse'), $this->field('counter_id', 'Assigned counter', 'select', true, $users), $this->field('count_month', 'Counting month (first day)', 'date')], ['count_month' => now()->startOfMonth()->format('Y-m-d')])];
+        return $this->page('counts', 'Physical inventory', OfficeWorkflow::enabled() ? 'Count office stock, explain discrepancies, finalize the count, then confirm any stock reconciliation.' : 'Count first, review discrepancies, then explicitly reconcile approved variances.', ['reference' => 'Count', 'fund' => 'Fund', 'location' => 'Location', 'month' => ['Count month', 'date'], 'counter' => 'Assigned counter', 'cutoff' => ['Snapshot cutoff', 'date'], 'status' => ['Status', 'status']], $records->map(fn ($r) => $this->countRow($r))->all(), $pagination) + ['createForm' => $this->form('Start monthly count', 'count.create', [...$this->scopeFields(false), $this->select('warehouse_id', 'Counting location', 'warehouse'), $this->field('counter_id', 'Assigned counter', 'select', true, $users), $this->field('count_month', 'Counting month (first day)', 'date')], ['count_month' => now()->startOfMonth()->format('Y-m-d')])];
     }
 
     /**
@@ -777,6 +899,13 @@ final class WorkspaceController extends Controller
     {
         $rows = [];
         $reports = ['annual-plans' => ['Annual projections and revisions', 'Original and revised approved annual plans'], 'budgets' => ['Budget utilization', 'Allocation, commitments, expenditure, and availability'], 'requests' => ['Monthly requests and approvals', 'Department requisitions and fulfillment status'], 'purchases' => ['Procurement and supplier history', 'Purchase orders, commitments, and actual payments'], 'stock' => ['Current stock and low stock', 'Fund-owned balances by item and location'], 'movements' => ['Inventory movement ledger', 'Receipts, issuances, returns, transfers, and adjustments'], 'issuances' => ['Stock issuances and consumption', 'Recipient and approved request traceability'], 'counts' => ['Physical counts and discrepancies', 'Cutoff quantities, physical counts, variance, and reconciliation'], 'expenditures' => ['Fund-specific actual expenditure', 'Immutable financial ledger and settlement references'], 'audit' => ['Audit trail', 'Significant actions with actor, timestamp, and values']];
+        if (OfficeWorkflow::enabled()) {
+            $reports = ['allowance' => ['Annual Supply allowance', 'Approved, submitted, received, and remaining quantities for every item'], 'monthly-items' => ['Monthly item activity', 'Supply requests and receipts, cash requests, and outside purchase receipts by month']] + $reports;
+            $reports['requests'] = ['Supply and cash requests', 'Office requests, quantities, and receipt status'];
+            $reports['purchases'] = ['Outside purchase history', 'Externally authorized purchases, receipts, and payments'];
+            $reports['movements'] = ['Office stock movement history', 'Supply receipts, outside purchases, office use, and count reconciliation'];
+            unset($reports['issuances']);
+        }
         foreach ($reports as $key => [$name, $description]) {
             if ($key === 'audit' && ! $this->can('audit.view')) {
                 continue;
@@ -801,7 +930,11 @@ final class WorkspaceController extends Controller
     private function administration(): array
     {
         $rows = [];
-        foreach (['fund' => FundingSource::class, 'department' => Department::class, 'warehouse' => Warehouse::class, 'fiscal-year' => FiscalYear::class, 'category' => ItemCategory::class, 'unit' => UnitOfMeasure::class, 'supplier' => Supplier::class] as $kind => $class) {
+        $configuration = ['fund' => FundingSource::class, 'department' => Department::class, 'warehouse' => Warehouse::class, 'fiscal-year' => FiscalYear::class, 'category' => ItemCategory::class, 'unit' => UnitOfMeasure::class, 'supplier' => Supplier::class];
+        if (OfficeWorkflow::enabled()) {
+            unset($configuration['department']);
+        }
+        foreach ($configuration as $kind => $class) {
             $query = $class::query();
             if ($kind === 'fund') {
                 $query->whereIn('id', $this->actor->fundingSources()->pluck('funding_sources.id'));
@@ -828,7 +961,7 @@ final class WorkspaceController extends Controller
         }
         $actions = $this->can('users.manage') ? [['label' => 'Manage users & roles', 'href' => '/administration/users']] : [];
         if ($this->can('master-data.manage')) {
-            foreach (['fund', 'department', 'warehouse', 'fiscal-year', 'category', 'unit', 'supplier'] as $kind) {
+            foreach (array_keys($configuration) as $kind) {
                 $actions[] = $this->action('Add '.$kind, $this->masterForm($kind, 'Add '.$kind));
             }
         }

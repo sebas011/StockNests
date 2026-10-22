@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Domain\Access;
+use App\Domain\OfficeWorkflow;
 use App\Models\AnnualProjection;
 use App\Models\BudgetAdjustment;
 use App\Models\GoodsReceipt;
@@ -11,8 +12,11 @@ use App\Models\ItemRequest;
 use App\Models\PurchaseOrder;
 use App\Models\StockBalance;
 use App\Models\StockIssuance;
+use App\Models\StockMovement;
 use App\Models\StockReservation;
+use App\Models\SupplyReceipt;
 use App\Models\User;
+use Illuminate\Support\Facades\Gate;
 
 final class WorkflowVisibility
 {
@@ -24,7 +28,7 @@ final class WorkflowVisibility
             return false;
         }
         $type = $data['record_type'] ?? '';
-        $allowed = [AnnualProjection::class, BudgetAdjustment::class, GoodsReceipt::class, InventoryCount::class, ItemRequest::class, PurchaseOrder::class, StockBalance::class, StockIssuance::class, StockReservation::class];
+        $allowed = [AnnualProjection::class, BudgetAdjustment::class, GoodsReceipt::class, SupplyReceipt::class, InventoryCount::class, ItemRequest::class, PurchaseOrder::class, StockBalance::class, StockIssuance::class, StockMovement::class, StockReservation::class];
         $recordId = filter_var($data['record_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if (! is_string($type) || ! in_array($type, $allowed, true) || $recordId === false) {
             return false;
@@ -35,13 +39,13 @@ final class WorkflowVisibility
         }
         $actualFund = match (true) {
             $record instanceof BudgetAdjustment => $record->allocation->funding_source_id,
-            $record instanceof StockReservation => $record->balance->funding_source_id,
+            $record instanceof StockReservation, $record instanceof StockMovement => $record->balance->funding_source_id,
             default => $record->getAttribute('funding_source_id'),
         };
         if ((int) $actualFund !== $fund) {
             return false;
         }
-        if ($record instanceof ItemRequest && Access::departmentLimited($user) && $user->hasRole('Department Requester') && ! $user->hasRole('Department Head') && (int) $record->created_by !== $user->id) {
+        if (! Gate::forUser($user)->allows('view', $record)) {
             return false;
         }
         if (! Access::departmentLimited($user)) {
@@ -58,16 +62,16 @@ final class WorkflowVisibility
 
     public static function destination(User $user, string $type): string
     {
-        if ($user->hasAnyPermission(['requests.approve', 'budget.approve', 'fund.approve', 'counts.approve'])) {
+        if (! OfficeWorkflow::enabled() && $user->hasAnyPermission(['requests.approve', 'budget.approve', 'fund.approve', 'counts.approve'])) {
             return '/app/approvals';
         }
 
         return match ($type) {
             AnnualProjection::class => '/app/projections',
-            ItemRequest::class, StockIssuance::class => '/app/requests',
+            ItemRequest::class, StockIssuance::class, SupplyReceipt::class => '/app/requests',
             PurchaseOrder::class, GoodsReceipt::class => $user->hasAnyPermission(['procurement.manage', 'inventory.manage', 'budgets.manage']) ? '/app/purchasing' : '/app/overview',
             InventoryCount::class => $user->can('inventory.manage') ? '/app/counts' : '/app/overview',
-            StockBalance::class, StockReservation::class => $user->can('inventory.manage') ? '/app/inventory' : '/app/overview',
+            StockBalance::class, StockMovement::class, StockReservation::class => $user->can('inventory.manage') ? '/app/inventory' : '/app/overview',
             BudgetAdjustment::class => $user->can('budgets.manage') ? '/app/funding' : '/app/overview',
             default => '/app/overview',
         };

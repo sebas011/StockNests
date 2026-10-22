@@ -1,3 +1,14 @@
+# Office workflow verification — 2026-10-23
+
+- PostgreSQL 18.6 backend suite: **157 tests, 1,011 assertions passed**, including simultaneous Supply submissions against one allowance, retries, partial receiving, cash separation, amendments, account setup and historical workflow regressions.
+- Frontend suite: **29 tests passed**. TypeScript and the production build passed.
+- PHPStan level 7 across configured application paths: **0 errors**. PHP formatting and frontend formatting/lint passed.
+- New portable browser checks exercise a real approved quantity of 10, a Supply submission of 3, receipt of 2, remaining allowance of 7, and preservation through stop/restart. The Windows release workflow executes these checks against the assembled download before publication.
+
+Testing uses disposable databases and packages. The existing user installation and its data are not changed by these tests. Official office form templates are still pending; general report exports are implemented.
+
+## Earlier verification records
+
 # Verification record
 
 ## Audit update — October 18–19, 2026

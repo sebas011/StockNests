@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Administration;
 
+use App\Domain\OfficeWorkflow;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Administration\UserAccessRequest;
 use App\Models\Department;
@@ -39,10 +40,13 @@ class UserController extends Controller
             ['name' => 'email', 'label' => 'Email address', 'type' => 'email', 'required' => true],
             ['name' => 'password', 'label' => 'Initial password', 'type' => 'password', 'required' => true, 'description' => '12+ characters, with upper and lower case, a number and a symbol.'],
             ['name' => 'department_id', 'label' => 'Department', 'type' => 'select', 'required' => true, 'options' => Department::where('is_active', true)->get()->map(fn ($d) => ['value' => (string) $d->id, 'label' => $d->name])],
-            ['name' => 'role', 'label' => 'Role', 'type' => 'select', 'required' => true, 'options' => Role::where('guard_name', 'web')->when(! $actor->hasRole('Super Administrator'), fn ($q) => $q->where('name', '<>', 'Super Administrator'))->get()->map(fn ($r) => ['value' => $r->name, 'label' => $r->name])],
+            ['name' => 'role', 'label' => 'Role', 'type' => 'select', 'required' => true, 'options' => Role::where('guard_name', 'web')->when(OfficeWorkflow::enabled(), fn ($q) => $q->whereNotIn('name', ['Budget Officer', 'Department Requester', 'Department Head', 'Fund Approver', 'Procurement Officer', 'Inventory Custodian']))->when(! $actor->hasRole('Super Administrator'), fn ($q) => $q->where('name', '<>', 'Super Administrator'))->get()->map(fn ($r) => ['value' => $r->name, 'label' => $r->name])],
             ['name' => 'fund_id', 'label' => 'Initial funding source', 'type' => 'select', 'required' => true, 'options' => $funds->map(fn ($f) => ['value' => (string) $f['id'], 'label' => $f['label']])],
             ['name' => 'reason', 'label' => 'Reason for access', 'type' => 'textarea', 'required' => true],
         ];
+        if (OfficeWorkflow::enabled()) {
+            $fields[3] = ['name' => 'department_id', 'label' => OfficeWorkflow::NAME, 'type' => 'hidden', 'required' => true];
+        }
         $users = User::with('roles', 'fundingSources', 'department')
             ->whereHas('fundingSources', fn ($q) => $q->whereIn('funding_sources.id', $fundIds))
             ->when($request->filled('q'), fn ($q) => $q->where(fn ($q) => $q->where('name', 'like', '%'.$request->string('q').'%')->orWhere('email', 'like', '%'.$request->string('q').'%')))
@@ -55,7 +59,7 @@ class UserController extends Controller
 
             return [
                 'id' => $user->id, 'name' => $user->name, 'email' => $user->email,
-                'role' => $user->roles->pluck('name')->join(', '), 'department' => $user->department?->name,
+                'role' => $user->roles->pluck('name')->join(', '), 'department' => OfficeWorkflow::enabled() ? OfficeWorkflow::NAME : $user->department?->name,
                 'funds' => $user->fundingSources->pluck('name')->join(', '), 'status' => $user->is_active ? 'active' : 'inactive',
                 'actions' => [
                     ['label' => 'Manage access', 'form' => ['title' => 'Manage '.$user->name, 'action' => '/administration/users/'.$user->id.'/access', 'fields' => $accessFields, 'defaults' => ['role' => $user->roles->first()?->name, 'department_id' => (string) $user->department_id, 'fund_id' => (string) $user->fundingSources->first()?->id, 'both_funds' => $user->fundingSources->count() > 1, 'is_active' => $user->is_active]]],
@@ -67,7 +71,7 @@ class UserController extends Controller
         return Inertia::render('stocknest', [
             'page' => ['key' => 'administration', 'title' => 'People & access', 'subtitle' => 'Manage accounts, roles and funding source access.', 'columns' => collect(['name' => 'Name', 'email' => 'Email', 'role' => 'Role', 'department' => 'Department', 'funds' => 'Funding sources', 'status' => 'Status'])->map(fn ($label, $key) => ['key' => $key, 'label' => $label, 'format' => $key === 'status' ? 'status' : 'text'])->values(), 'rows' => $rows, 'pagination' => ['current_page' => $users->currentPage(), 'last_page' => $users->lastPage(), 'total' => $users->total(), 'prev_page_url' => $users->previousPageUrl(), 'next_page_url' => $users->nextPageUrl()]],
             'funds' => $funds, 'filters' => $request->only('q'),
-            'createForm' => ['title' => 'Create account', 'action' => '/administration/users', 'fields' => $fields],
+            'createForm' => ['title' => 'Create account', 'action' => '/administration/users', 'fields' => $fields, 'defaults' => OfficeWorkflow::enabled() ? ['department_id' => (string) OfficeWorkflow::departmentId()] : []],
             'pageActions' => $actor->can('roles.manage') && $this->hasAllFunds($actor) ? [['label' => 'Role permissions', 'form' => ['title' => 'Configure a role', 'action' => '/administration/roles', 'fields' => [
                 ['name' => 'name', 'label' => 'Role name', 'type' => 'text', 'required' => true],
                 ['name' => 'permissions', 'label' => 'Permissions', 'type' => 'multiselect', 'required' => true, 'options' => $actor->getAllPermissions()->sortBy('name')->map(fn ($p) => ['value' => $p->name, 'label' => $p->name])->values()->all()],

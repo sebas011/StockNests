@@ -339,7 +339,7 @@ function Update-Environment {
         APP_NAME = 'StockNest'; APP_ENV = 'production'; APP_KEY = $key; APP_DEBUG = 'false'
         APP_URL = "http://127.0.0.1:$($script:state.webPort)"; APP_TIMEZONE = 'Asia/Manila'
         APP_LOCALE = 'en'; APP_FALLBACK_LOCALE = 'en'; APP_MAINTENANCE_DRIVER = 'file'
-        STOCKNEST_PORTABLE = 'true'; STOCKNEST_CURRENCY = 'PHP'; STOCKNEST_DEMO = 'false'
+        STOCKNEST_PORTABLE = 'true'; STOCKNEST_CURRENCY = 'PHP'; STOCKNEST_DEMO = 'false'; STOCKNEST_OFFICE_WORKFLOW = 'true'
         STOCKNEST_NOTIFICATION_EMAIL = 'false'; LOG_CHANNEL = 'single'; LOG_LEVEL = 'warning'
         DB_CONNECTION = 'pgsql'; DB_HOST = '127.0.0.1'; DB_PORT = [string] $script:state.dbPort
         DB_DATABASE = 'stocknest'; DB_USERNAME = 'stocknest'; DB_PASSWORD = $password; DB_SSLMODE = 'disable'; DB_URL = ''

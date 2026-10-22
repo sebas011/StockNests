@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\StockNest;
 
 use App\Domain\Access;
+use App\Domain\OfficeWorkflow;
 use App\Domain\WorkflowService;
 use App\Http\Controllers\Controller;
 use App\Reports\StockNestReport;
@@ -28,6 +29,7 @@ final class ReportController extends Controller
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
             'fiscal_year_id' => ['nullable', 'integer'],
+            'year' => ['nullable', 'integer', 'between:2000,2200'],
             'department_id' => ['nullable', 'integer'],
             'warehouse_id' => ['nullable', 'integer'],
             'item_id' => ['nullable', 'integer'],
@@ -112,7 +114,7 @@ final class ReportController extends Controller
         }
 
         $escape = fn ($value) => htmlspecialchars((string) ($value ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $html = '<html><head><style>body{font-family:DejaVu Sans,sans-serif;font-size:8px;color:#172c2c}h1{font-size:18px}table{border-collapse:collapse;width:100%}th,td{padding:5px;border:1px solid #ccd6d6;text-align:left;overflow-wrap:anywhere}th{background:#e8f1ee}thead{display:table-header-group}</style></head><body><h1>StockNest · '.$escape(ucwords(str_replace('-', ' ', $report))).'</h1><p>Generated '.$escape(now()->timezone('Asia/Manila')->format('Y-m-d H:i T')).' · '.$escape($request->user()->name).' · PHP</p><p>Filters: '.$escape(http_build_query($request->query())).'</p><table><thead><tr>';
+        $html = '<html><head><style>body{font-family:DejaVu Sans,sans-serif;font-size:8px;color:#172c2c}h1{font-size:18px}table{border-collapse:collapse;width:100%}th,td{padding:5px;border:1px solid #ccd6d6;text-align:left;overflow-wrap:anywhere}th{background:#e8f1ee}thead{display:table-header-group}</style></head><body><h1>StockNest · '.$escape(ucwords(str_replace('-', ' ', $report))).'</h1><p>'.$escape(OfficeWorkflow::enabled() ? OfficeWorkflow::NAME : config('stocknest.organization')).'</p><p>Generated '.$escape(now()->timezone('Asia/Manila')->format('Y-m-d H:i T')).' · '.$escape($request->user()->name).' · PHP</p><p>Filters: '.$escape(http_build_query($request->query())).'</p><table><thead><tr>';
         foreach ($headings as $heading) {
             $html .= '<th>'.$escape(ucwords(str_replace('_', ' ', $heading))).'</th>';
         }

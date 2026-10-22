@@ -1,39 +1,42 @@
 # StockNest
 
-Budget-integrated inventory management for **GAA** and **APPCSE**, built with PHP 8.4+, Laravel 13, React 19, TypeScript, Inertia 3, Tailwind 4, shadcn/ui, PostgreSQL 18, Spatie Permission, Redis, Laravel Excel, Dompdf and Recharts.
+Inventory and approved annual Supply allowance tracking for the **Office of the Vice President for Academic Affairs**, with separate **GAA** and **APPCSE** funds. Built with PHP 8.4+, Laravel 13, React 19, TypeScript, Inertia 3, Tailwind 4, shadcn/ui, PostgreSQL 18, Spatie Permission, Redis, Laravel Excel, Dompdf and Recharts.
 
 **Windows PC: [download the ready-to-run ZIP](https://github.com/sebas011/StockNests/releases/latest/download/StockNest-Windows-x64.zip).** Extract the whole ZIP, then double-click **Start StockNest.cmd**. Your browser opens the first-administrator setup. Docker, Node.js and separate runtime installations are unnecessary. See the [Windows guide](docs/operations/portable-windows.md) for starting, stopping, backups and updates.
 
 For the Docker option on Windows, macOS or Linux, use **Code → Download ZIP** or clone `https://github.com/sebas011/StockNests.git`, then follow [installation instructions](INSTALL.md). GitHub's source ZIP and the ready-to-run Windows release ZIP are different downloads.
 
-**Development implementation — not approved for production use.** Screens and core workflows use actual database records. The full requested scope is broader than this first integrated implementation. See [implementation status](docs/implementation-status.md) for outstanding work and verification limits.
+Use StockNest after Supply approves your annual projection. Encode approved items, track requests and deliveries, record outside cash purchases, and view monthly item statistics. See the [office workflow guide](docs/office-workflow.md). Official form layouts are pending the office templates.
 
 ## Documentation
 
 - [Architecture, business analysis, permissions and roadmap](docs/README.md)
 - [Implemented database and ER diagram](docs/database-implemented.md)
 - [Executed verification](docs/verification.md)
-- [Complete original requirements](docs/MASTER-REQUIREMENTS.md)
+- [Current office workflow](docs/office-workflow.md)
+- [Original institution-wide requirements (historical reference)](docs/MASTER-REQUIREMENTS.md)
 - [Windows PC: download, extract and run](docs/operations/portable-windows.md)
 - [Local setup](docs/operations/local-setup.md)
 - [Deployment, backup and recovery](docs/operations/deployment-and-backup.md)
 
 The proposed architecture/schema documents describe the complete target. They are not claims that every proposed feature is implemented.
 
-## Implemented core
+## Implemented office workflow
 
-- Administrator-managed accounts, closed public registration, active-account enforcement, session revocation, password reset, email verification, and optional Fortify two-factor authentication/passkeys.
-- Nine initial roles, configurable permission grants, explicit fund assignments, department scoping, requester ownership, server-side Policies and Form Requests. Global role changes require `roles.manage` and scope over every configured fund. Self approval is denied.
-- Shared item catalog, categories, units, suppliers, warehouses, fiscal years and configurable fund profiles. GAA/APPCSE are seeded records, not separate code paths.
-- Draft projections, submission/decisions, original approved baselines and separate revised projections. Allocation changes require independent authorization.
-- Multi-item requests, ordered department/fund approval, unplanned-item exception comments, partial quantity approval, returns for revision and controlled cancellation.
-- Purchase orders for approved requests, independent approval/commitments, partial goods receipts and explicit payment settlement that releases commitments without counting spending twice.
-- Fund-owned stock balances and immutable movement records; reservations, partial issuance, returns and paired same-fund transfers sharing an immutable transfer document. Negative stock is rejected.
-- Monthly cutoff counts, incomplete encoding/recounts, variance reasons, independent approval and separate reconciliation. Applying approved variance to the current balance preserves later transactions.
-- Database-backed dashboard/workspace screens, scoped queries, search/filtering/pagination, record details/action forms, scheduled monthly projections versus actual spending, and original/revised/authorized/committed/spent/available budget figures.
-- Ten core report families with CSV/Excel/PDF exports; queued workflow notifications, notification access rechecks, authentication activity, audit trails, transaction locking and bound idempotency keys.
+- Fixed Office of the Vice President for Academic Affairs identity; separate GAA/APPCSE funds and role-based account access.
+- Shared item catalog, suppliers, units, categories and fiscal years.
+- Encode externally approved annual items and immutable amendments; show approved, requested, received and remaining quantities.
+- Supply drafts consume no allowance. Submission deducts the quantities once; partial deliveries separately increase stock. Unreceived cancellation restores the allowance.
+- Separate cash requests and externally authorized outside purchases, with budget commitments, receiving and actual payments. Outside quantities never consume the Supply allowance.
+- Office stock consumption, immutable movement records, physical cutoff counts and explicit variance reconciliation.
+- Monthly item statistics, annual allowance, budget and inventory reports with CSV/Excel/PDF exports; audit history and transaction retry protection.
+- Administrator-managed accounts, private portable data, session revocation, password controls and scoped fund permissions.
 
-**Budget availability = authorized allocation − outstanding commitments − actual spending.** Planning approval creates neither stock nor expenditure. Monetary arithmetic uses decimal strings/BCMath; database money uses two decimal places and quantities four. Inventory valuation is explicitly a catalog-cost estimate pending an agreed accounting valuation policy.
+**Supply remaining quantity = externally approved annual quantity − submitted, uncanceled Supply requests.** Receiving and office consumption do not deduct that allowance again.
+
+**Budget availability = recorded authorized allocation − outstanding outside-purchase commitments − actual spending.** Money uses two decimal places and quantities four. Inventory valuation uses catalog standard cost.
+
+The Approval Center and multi-department approval workflow are removed from the office interface. Earlier documents describe the original institutional proposal and remain historical references; [current scope](docs/office-workflow.md) takes precedence.
 
 ## Docker development setup
 
@@ -52,16 +55,6 @@ The initializer generates missing local secrets, preserves existing keys and pri
 
 Open [StockNest](http://localhost:8080) and [the local mail inbox](http://localhost:8025). Published development ports bind only to localhost. Configure HTTPS, production credentials, real mail, backups and operational controls before deployment.
 
-### Optional demonstration data
-
-Use a disposable local database. Set `STOCKNEST_DEMO=true` in `.env` and recreate containers, then run:
-
-```powershell
-docker compose exec app php artisan db:seed --class=DemoSeeder
-```
-
-The seeder refuses production execution and prints a newly generated local demo password. Accounts include `admin@stocknest.test`, `requester@stocknest.test`, `head@stocknest.test`, `approver@stocknest.test` and `custodian@stocknest.test`. Demo plans, allocations, orders, receipts and payments remain separately attributed to GAA/APPCSE. Never reuse demo accounts in production.
-
 ## Verification
 
 ```powershell
@@ -73,7 +66,7 @@ npm run build
 
 The default backend suite uses isolated SQLite memory databases. It does **not** certify PostgreSQL locks or PostgreSQL-only triggers. Separate-process PostgreSQL concurrency tests are included and skip on SQLite. They require `APP_ENV=testing` and a dedicated database ending in `_test`; they deliberately reset that database. The GitHub workflow configures PostgreSQL 18 and PHP 8.4. Never point tests at production credentials.
 
-Browser checks use `npm run test:e2e` after installing Chromium with `npx playwright install chromium` and starting the application. The multi-role request test requires an explicitly marked disposable demo workspace, `E2E_ALLOW_MUTATIONS=true` and `E2E_TEST_PASSWORD` containing its generated password. Both browser tests passed, including two approval stages and unchanged physical stock. [GitHub Actions](https://github.com/sebas011/StockNests/actions/workflows/tests.yml) also checks a fresh Docker build, startup, migrations and login-page response. See [verification](docs/verification.md) for exact results.
+Browser checks use `npm run test:e2e` after installing Chromium with `npx playwright install chromium` and starting the application. The multi-role request test requires an explicitly marked disposable demo workspace, `E2E_ALLOW_MUTATIONS=true` and `E2E_TEST_PASSWORD` containing its generated password. The portable browser checks cover first-run setup, catalog entry, exports and persistence. Legacy multi-role browser tests require the historical institutional mode. [GitHub Actions](https://github.com/sebas011/StockNests/actions/workflows/tests.yml) also checks a fresh Docker build, startup, migrations and login-page response. See [verification](docs/verification.md) for exact results.
 
 ## Physical counting procedure
 

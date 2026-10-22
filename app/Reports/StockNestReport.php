@@ -4,6 +4,8 @@ namespace App\Reports;
 
 use App\Domain\Access;
 use App\Domain\Decimal;
+use App\Domain\OfficeMonthlyStatistics;
+use App\Domain\OfficeWorkflow;
 use App\Domain\WorkflowService;
 use App\Models\AnnualProjection;
 use App\Models\AuditLog;
@@ -45,6 +47,8 @@ final class StockNestReport
     public function rows(string $report): iterable
     {
         return match ($report) {
+            'allowance' => $this->allowanceRows(),
+            'monthly-items' => $this->monthlyRows(),
             'annual-plans' => $this->lines(ProjectionLine::class, 'projection', true)
                 ->with('projection.fund', 'projection.fiscalYear', 'projection.department', 'item')->lazyById(200)
                 ->map(fn ($l) => ['reference' => $l->projection->reference, 'fund' => $l->projection->fund->code, 'year' => $l->projection->fiscalYear->year, 'department' => $l->projection->department->name, 'original_projection_id' => $l->projection->original_projection_id ?? $l->projection->id, 'revision' => $l->projection->revision, 'status' => $l->projection->status, 'item' => $l->item->name, 'quantity' => $l->quantity, 'unit_price' => $l->unit_price, 'total' => $l->total]),
@@ -58,9 +62,9 @@ final class StockNestReport
                 return ['fund' => $allocation->fund->code, 'year' => $allocation->fiscalYear->year, 'original_plan' => Decimal::add((string) (clone $plans)->whereNull('original_projection_id')->sum('total'), '0'), 'revised_plan' => Decimal::add((string) $revised, '0')] + $this->workflow->budget($allocation);
             }),
             'requests' => $this->lines(ItemRequestLine::class, 'request', true)->with('request.fund', 'request.department', 'request.creator', 'item')->lazyById(200)
-                ->map(fn ($l) => ['reference' => $l->request->reference, 'fund' => $l->request->fund->code, 'department' => $l->request->department->name, 'requester' => $l->request->creator->name, 'date' => $l->request->created_at->toIso8601String(), 'status' => $l->request->status, 'item' => $l->item->name, 'requested' => $l->quantity, 'approved' => $l->approved_quantity, 'fulfilled' => $l->fulfilled_quantity, 'unplanned' => $l->is_unplanned ? 'Yes' : 'No']),
+                ->map(fn ($l) => ['reference' => $l->request->reference, 'fund' => $l->request->fund->code, 'department' => $l->request->department->name, 'requester' => $l->request->creator->name, 'date' => $l->request->created_at->toIso8601String(), 'status' => $l->request->status, 'item' => $l->item->name, 'requested' => $l->quantity, 'approved' => $l->approved_quantity, 'fulfilled' => $l->fulfilled_quantity, 'unplanned' => $l->is_unplanned ? 'Yes' : 'No'] + (OfficeWorkflow::enabled() ? ['channel' => $l->request->channel, 'supply_received' => $l->request->channel === 'supply' ? $l->received_quantity : '0.0000', 'outside_received' => $l->request->channel === 'cash' ? $l->received_quantity : '0.0000', 'submitted_at' => $l->request->submitted_at?->toIso8601String()] : [])),
             'purchases' => $this->lines(PurchaseOrderLine::class, 'order', true)->with('order.fund', 'order.supplier', 'order.request', 'item')->lazyById(200)
-                ->map(fn ($l) => ['reference' => $l->order->reference, 'request' => $l->order->request->reference, 'fund' => $l->order->fund->code, 'supplier' => $l->order->supplier->name, 'status' => $l->order->status, 'item' => $l->item->name, 'ordered' => $l->quantity, 'received' => $l->received_quantity, 'unit_price' => $l->unit_price, 'line_total' => $l->total, 'order_commitment' => $l->order->committed_amount, 'order_expenditure' => $l->order->spent_amount]),
+                ->map(fn ($l) => ['reference' => $l->order->reference, 'request' => $l->order->request->reference, 'fund' => $l->order->fund->code, 'supplier' => $l->order->supplier->name, 'status' => $l->order->status, 'item' => $l->item->name, 'ordered' => $l->quantity, 'received' => $l->received_quantity, 'unit_price' => $l->unit_price, 'line_total' => $l->total, 'order_commitment' => $l->order->committed_amount, 'order_expenditure' => $l->order->spent_amount] + (OfficeWorkflow::enabled() ? ['cash_authority_reference' => $l->order->authorization_reference] : [])),
             'stock' => $this->apply(StockBalance::query())->with('fund', 'warehouse', 'item')->withSum(['reservations as reserved_quantity' => fn ($q) => $q->where('status', 'active')], 'quantity')->lazyById(200)
                 ->map(fn ($b) => ['fund' => $b->fund->code, 'location' => $b->warehouse->name, 'sku' => $b->item->sku, 'item' => $b->item->name, 'quantity' => $b->quantity, 'reserved' => Decimal::add((string) ($b->reserved_quantity ?? '0'), '0', 4), 'reorder_point' => $b->item->reorder_point, 'low_stock' => Decimal::cmp($b->quantity, $b->item->reorder_point) <= 0 ? 'Yes' : 'No', 'estimated_value' => Decimal::mul($b->quantity, $b->item->standard_cost)]),
             'movements' => $this->movementRows(),
@@ -73,6 +77,45 @@ final class StockNestReport
                 ->map(fn ($r) => ['timestamp' => $r->created_at->toIso8601String(), 'actor' => $r->user?->name, 'fund' => $r->fund?->code, 'action' => $r->action, 'record_type' => class_basename($r->subject_type), 'record_id' => $r->subject_id, 'reason' => $r->reason, 'before' => json_encode($r->before_values, JSON_THROW_ON_ERROR), 'after' => json_encode($r->after_values, JSON_THROW_ON_ERROR)]),
             default => abort(404),
         };
+    }
+
+    /** @return iterable<int, array<string, mixed>> */
+    private function allowanceRows(): iterable
+    {
+        abort_unless(OfficeWorkflow::enabled(), 404);
+        foreach (OfficeWorkflow::allowances($this->request->user(), $this->optionalInteger('fund_id'), $this->optionalInteger('fiscal_year_id')) as $row) {
+            if ($this->matchesItem($row) && (! $this->request->filled('year') || (int) $row['year'] === $this->request->integer('year'))) {
+                yield $row;
+            }
+        }
+    }
+
+    /** @return iterable<int, array<string, mixed>> */
+    private function monthlyRows(): iterable
+    {
+        abort_unless(OfficeWorkflow::enabled(), 404);
+        foreach (OfficeMonthlyStatistics::iterate(
+            $this->request->user(), $this->optionalInteger('fund_id'), $this->optionalInteger('year'),
+            $this->request->filled('date_from') ? $this->request->string('date_from')->toString() : null,
+            $this->request->filled('date_to') ? $this->request->string('date_to')->toString() : null,
+            $this->optionalInteger('fiscal_year_id'),
+        ) as $row) {
+            if ($this->matchesItem($row)) {
+                yield $row;
+            }
+        }
+    }
+
+    private function optionalInteger(string $key): ?int
+    {
+        return $this->request->filled($key) ? $this->request->integer($key) : null;
+    }
+
+    /** @param array<string, mixed> $row */
+    private function matchesItem(array $row): bool
+    {
+        return (! $this->request->filled('item_id') || (int) $row['item_id'] === $this->request->integer('item_id'))
+            && (! $this->request->filled('q') || str_contains(mb_strtolower($row['item'].' '.$row['sku']), mb_strtolower($this->request->string('q')->toString())));
     }
 
     /**

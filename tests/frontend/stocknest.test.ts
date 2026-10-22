@@ -3,6 +3,7 @@ import {
     displayDetailKey,
     formatDate,
     formatMoney,
+    formatNumber,
     idempotencyKey,
     initialFormValues,
     statusTone,
@@ -131,5 +132,12 @@ describe('Financial and record presentation', () => {
         expect(displayDetailKey('remember_token')).toBe(false);
         expect(displayDetailKey('idempotency_key')).toBe(false);
         expect(displayDetailKey('approved_quantity')).toBe(true);
+    });
+});
+
+describe('Inventory quantity precision', () => {
+    it('keeps the smallest supported inventory quantity visible', () => {
+        expect(formatNumber('0.0001')).toBe('0.0001');
+        expect(formatNumber('12.3456')).toBe('12.3456');
     });
 });

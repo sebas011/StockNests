@@ -154,6 +154,31 @@ type Props = {
         | number
         | { name?: string; label?: string; year?: number };
     organization?: string | { name?: string };
+    officeWorkflow?: boolean;
+    allowanceRows?: AllowanceRow[];
+    monthlyStats?: MonthlyItemRow[];
+};
+
+type AllowanceRow = {
+    item_id?: number | string;
+    item: string;
+    unit: string;
+    fund: string;
+    year: number | string;
+    approved_quantity: string | number;
+    requested_quantity: string | number;
+    received_quantity: string | number;
+    remaining_quantity: string | number;
+};
+type MonthlyItemRow = {
+    month: string;
+    item: string;
+    unit: string;
+    fund: string;
+    requested_quantity: string | number;
+    received_quantity: string | number;
+    outside_quantity: string | number;
+    outside_received_quantity: string | number;
 };
 
 type NavItem = {
@@ -503,10 +528,20 @@ export default function StockNest(props: Props) {
     const searchRef = useRef<HTMLInputElement>(null);
     const permissions = props.auth?.permissions;
     const user = props.auth?.user;
+    const officeWorkflow = props.officeWorkflow === true;
+    const navLabel = (item: NavItem) =>
+        officeWorkflow && item.key === 'projections'
+            ? 'Approved annual items'
+            : officeWorkflow && item.key === 'purchasing'
+              ? 'Outside purchases'
+              : item.label;
     const canSee = (item: NavItem) =>
-        permissions === undefined ||
-        permissions.includes('*') ||
-        item.permissions.some((permission) => permissions.includes(permission));
+        !(officeWorkflow && item.key === 'approvals') &&
+        (permissions === undefined ||
+            permissions.includes('*') ||
+            item.permissions.some((permission) =>
+                permissions.includes(permission),
+            ));
     const isOverview = page.key === 'overview';
     const demo = props.demo || props.isDemo || props.demoMode;
     const orgName =
@@ -602,7 +637,27 @@ export default function StockNest(props: Props) {
     const statusOptions = isDomainWorkspace
         ? [
               ...new Set([
-                  ...(statuses[page.key] ?? []),
+                  ...(officeWorkflow
+                      ? ({
+                            projections: ['approved'],
+                            requests: [
+                                'draft',
+                                'submitted',
+                                'approved',
+                                'partially_received',
+                                'fulfilled',
+                                'canceled',
+                            ],
+                            purchasing: [
+                                'ordered',
+                                'partially_received',
+                                'received',
+                                'closed',
+                                'canceled',
+                            ],
+                            counts: ['counting', 'approved', 'reconciled'],
+                        }[page.key] ?? [])
+                      : (statuses[page.key] ?? [])),
                   ...page.rows
                       .map((row) => row.status)
                       .filter(
@@ -640,7 +695,7 @@ export default function StockNest(props: Props) {
                                         }
                                         title={
                                             collapsed && !isMobile
-                                                ? item.label
+                                                ? navLabel(item)
                                                 : undefined
                                         }
                                         onClick={() => setMobileOpen(false)}
@@ -650,7 +705,7 @@ export default function StockNest(props: Props) {
                                             strokeWidth={1.7}
                                         />
                                         {(!collapsed || isMobile) && (
-                                            <span>{item.label}</span>
+                                            <span>{navLabel(item)}</span>
                                         )}
                                         {currentPath === `/app/${item.key}` &&
                                             (!collapsed || isMobile) && (
@@ -959,6 +1014,190 @@ export default function StockNest(props: Props) {
                             ))}
                         </section>
                     )}
+                    {officeWorkflow &&
+                        (isOverview || page.key === 'projections') && (
+                            <section
+                                className="sn-panel mb-6"
+                                aria-label="Annual Supply allowance"
+                            >
+                                <div className="sn-panel-heading">
+                                    <div>
+                                        <p className="sn-section-eyebrow">
+                                            APPROVED ANNUAL ITEMS
+                                        </p>
+                                        <h2>
+                                            Remaining to request from Supply
+                                        </h2>
+                                    </div>
+                                </div>
+                                {(props.allowanceRows?.length ?? 0) > 0 ? (
+                                    <div className="sn-table-wrap">
+                                        <table className="sn-data-table">
+                                            <thead>
+                                                <tr>
+                                                    {[
+                                                        'Item',
+                                                        'Unit',
+                                                        'Fund',
+                                                        'Year',
+                                                        'Approved',
+                                                        'Requested',
+                                                        'Received',
+                                                        'Left to request',
+                                                    ].map((label) => (
+                                                        <th
+                                                            scope="col"
+                                                            key={label}
+                                                        >
+                                                            {label}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {props.allowanceRows?.map(
+                                                    (row, index) => (
+                                                        <tr
+                                                            key={`${row.item_id ?? row.item}-${row.fund}-${row.year}-${index}`}
+                                                        >
+                                                            <th scope="row">
+                                                                {row.item}
+                                                            </th>
+                                                            <td>{row.unit}</td>
+                                                            <td>{row.fund}</td>
+                                                            <td>{row.year}</td>
+                                                            <td>
+                                                                {formatNumber(
+                                                                    row.approved_quantity,
+                                                                )}
+                                                            </td>
+                                                            <td>
+                                                                {formatNumber(
+                                                                    row.requested_quantity,
+                                                                )}
+                                                            </td>
+                                                            <td>
+                                                                {formatNumber(
+                                                                    row.received_quantity,
+                                                                )}
+                                                            </td>
+                                                            <td>
+                                                                <strong>
+                                                                    {formatNumber(
+                                                                        row.remaining_quantity,
+                                                                    )}
+                                                                </strong>
+                                                            </td>
+                                                        </tr>
+                                                    ),
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <EmptyState
+                                        title="Add your approved annual items"
+                                        description="Encode the quantities already approved by Supply to start tracking what remains."
+                                        icon={ClipboardList}
+                                    />
+                                )}
+                                <p className="sn-panel-footnote">
+                                    Submitting to Supply reduces the allowance.
+                                    Recording a receipt updates office stock.
+                                    Outside cash purchases are tracked
+                                    separately.
+                                </p>
+                            </section>
+                        )}
+                    {officeWorkflow && isOverview && (
+                        <section
+                            className="sn-panel mb-6"
+                            aria-label="Monthly item statistics"
+                        >
+                            <div className="sn-panel-heading">
+                                <div>
+                                    <p className="sn-section-eyebrow">
+                                        ITEM ACTIVITY
+                                    </p>
+                                    <h2>Items by month</h2>
+                                </div>
+                            </div>
+                            {(props.monthlyStats?.length ?? 0) > 0 ? (
+                                <details className="sn-chart-data" open>
+                                    <summary>
+                                        View monthly requests and receipts
+                                    </summary>
+                                    <div className="sn-table-wrap">
+                                        <table className="sn-data-table">
+                                            <thead>
+                                                <tr>
+                                                    {[
+                                                        'Month',
+                                                        'Item',
+                                                        'Unit',
+                                                        'Fund',
+                                                        'Requested from Supply',
+                                                        'Received from Supply',
+                                                        'Cash requested',
+                                                        'Outside items received',
+                                                    ].map((label) => (
+                                                        <th
+                                                            scope="col"
+                                                            key={label}
+                                                        >
+                                                            {label}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {props.monthlyStats?.map(
+                                                    (row, index) => (
+                                                        <tr
+                                                            key={`${row.month}-${row.item}-${row.fund}-${index}`}
+                                                        >
+                                                            <th scope="row">
+                                                                {row.month}
+                                                            </th>
+                                                            <td>{row.item}</td>
+                                                            <td>{row.unit}</td>
+                                                            <td>{row.fund}</td>
+                                                            <td>
+                                                                {formatNumber(
+                                                                    row.requested_quantity,
+                                                                )}
+                                                            </td>
+                                                            <td>
+                                                                {formatNumber(
+                                                                    row.received_quantity,
+                                                                )}
+                                                            </td>
+                                                            <td>
+                                                                {formatNumber(
+                                                                    row.outside_quantity,
+                                                                )}
+                                                            </td>
+                                                            <td>
+                                                                {formatNumber(
+                                                                    row.outside_received_quantity,
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ),
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </details>
+                            ) : (
+                                <EmptyState
+                                    title="Monthly activity will appear here"
+                                    description="Submit a Supply request or record a receipt to start the monthly item history."
+                                    icon={CalendarDays}
+                                />
+                            )}
+                        </section>
+                    )}
                     {isOverview && (
                         <div className="sn-analytics-grid">
                             <section className="sn-panel sn-spending-panel">
@@ -1166,7 +1405,18 @@ export default function StockNest(props: Props) {
                                                         key={value}
                                                         value={value}
                                                     >
-                                                        {humanize(value)}
+                                                        {officeWorkflow &&
+                                                        page.key ===
+                                                            'requests' &&
+                                                        value === 'approved'
+                                                            ? 'Cash requested'
+                                                            : officeWorkflow &&
+                                                                page.key ===
+                                                                    'requests' &&
+                                                                value ===
+                                                                    'partially_fulfilled'
+                                                              ? 'Partially received'
+                                                              : humanize(value)}
                                                     </option>
                                                 ))}
                                             </select>
@@ -1553,6 +1803,7 @@ export default function StockNest(props: Props) {
                 }}
                 title={recordTitle}
                 section={page.key}
+                officeWorkflow={officeWorkflow}
                 currency={currency}
                 timezone={timezone}
             />

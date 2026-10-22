@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Domain\OfficeWorkflow;
 use App\Http\Requests\PortableSetupRequest;
 use App\Models\Department;
 use App\Models\FundingSource;
@@ -35,8 +36,8 @@ final class PortableSetupController extends Controller
             $user->forceFill([
                 'is_active' => true,
                 'email_verified_at' => now(),
-                'department_id' => Department::query()->where('code', 'ADMIN')->value('id')
-                    ?? Department::query()->orderBy('id')->value('id'),
+                'department_id' => OfficeWorkflow::enabled() ? OfficeWorkflow::departmentId() : (Department::query()->where('code', 'ADMIN')->value('id')
+                    ?? Department::query()->orderBy('id')->value('id')),
             ])->save();
             $user->assignRole('Super Administrator');
             $user->fundingSources()->sync(FundingSource::query()->pluck('id'));

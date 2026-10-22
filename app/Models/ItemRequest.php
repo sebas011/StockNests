@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * @property numeric-string $estimated_total
+ * @property 'supply'|'cash' $channel
  */
 #[UsePolicy(StockNestPolicy::class)]
 class ItemRequest extends DomainModel
@@ -53,5 +54,11 @@ class ItemRequest extends DomainModel
     public function issuances(): HasMany
     {
         return $this->hasMany(StockIssuance::class);
+    }
+
+    /** @return HasMany<SupplyReceipt, $this> */
+    public function supplyReceipts(): HasMany
+    {
+        return $this->hasMany(SupplyReceipt::class);
     }
 }

@@ -2,7 +2,8 @@
 
 return [
     'currency' => env('STOCKNEST_CURRENCY', 'PHP'),
-    'organization' => env('STOCKNEST_ORGANIZATION', 'StockNest'),
+    'organization' => env('STOCKNEST_ORGANIZATION', 'Office of the Vice President for Academic Affairs'),
+    'office_workflow' => (bool) env('STOCKNEST_OFFICE_WORKFLOW', true),
     'public_registration' => false,
     'portable' => (bool) env('STOCKNEST_PORTABLE', false),
     'demo' => (bool) env('STOCKNEST_DEMO', false),

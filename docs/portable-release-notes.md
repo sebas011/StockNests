@@ -1,17 +1,17 @@
-Download **StockNest-Windows-x64.zip** below. Extract the entire folder and open **Start StockNest.cmd**. Create your administrator account in the browser on first start. Use **Stop StockNest.cmd** when finished.
+Download **StockNest-Windows-x64.zip** below. Extract the entire ZIP, open **Start StockNest.cmd**, and create your administrator account on first start. Use **Stop StockNest.cmd** when finished. No Docker or separate PHP, database, Node.js or runtime installation is required on Windows 10/11 x64.
 
-The package includes PHP, PostgreSQL, compiled screens, production application dependencies and app-local Windows runtime libraries. It needs no Docker or separate runtime/database installation. It runs offline on a Windows 10/11 x64 PC using the built-in PowerShell and a browser.
+This release follows the **Office of the Vice President for Academic Affairs** workflow:
 
-Accounts, records and private configuration are created in `data/` on your PC. No demo data or default administrator password is bundled. Stop the application before making a full-folder backup or moving it. Separate PC copies do not synchronize records.
+- Encode annual items after external Supply approval.
+- Deduct item allowances when requests are submitted to Supply, with separate partial delivery tracking.
+- Keep outside cash requests and purchases separate from the Supply item allowance.
+- Record office consumption, budgets, physical counts and monthly item statistics.
+- Use CSV, Excel and PDF reports. Official print forms will follow when the office provides its templates.
 
-This update strengthens approval separation, reservation limits and release, account access, report limits and private Windows file permissions. New accounts created by an administrator must replace their initial password before using the system. Report CSV downloads stream larger datasets; oversized PDF/Excel exports explain how to narrow filters or switch to CSV. Table sorting now applies across the full filtered list, charts load when needed, mobile tables stay within the page, and keyboard focus returns after closing forms.
+The department selector, Approval Center and internal approval stages have been removed from the office screens. External cash authority is recorded when an outside purchase is entered. Existing documents and audit history are preserved. Historical institutional documents are not automatically reclassified into the new office annual allowance; encode the approved office baseline before making new Supply requests.
 
-Shutdown handles a background worker that has already exited while Windows still reports stale process information. Checks protecting unrelated programs remain in place.
+**Updating:** stop StockNest and back up the entire folder. Extract this release into a different empty folder, then copy your complete existing **data/** folder into it before starting. Startup applies the upgrade migrations. Keep the original stopped copy and backup until you verify your records. Never replace existing data with release files. See the [update guide](https://github.com/sebas011/StockNests/blob/main/docs/operations/portable-windows.md#update-an-existing-installation).
 
-**Updating an existing copy:** stop StockNest and back up the entire folder. Extract this release into a different, empty folder, then copy your existing `data/` folder into it before starting. Startup applies the upgrade migrations. Keep the original stopped copy and backup until you confirm your records. Never replace your existing data with a release folder. See the [update guide](https://github.com/sebas011/StockNests/blob/main/docs/operations/portable-windows.md#update-an-existing-installation).
+Each PC keeps separate records. Stop the system before copying its data; copies do not synchronize automatically. No demo transactions or default administrator password are bundled.
 
-Administrators using custom roles should review the new `budget.approve`, `fund.approve`, `requests.department-approve` and `fiscal.reopen` permissions. Existing customized grants are preserved. Standard eligible role bundles receive the new permissions through the upgrade migration.
-
-The release workflow checks launch/stop/restart, persistence, first administrator setup, catalog records and exports. The current application remains the documented development implementation; see [remaining scope](https://github.com/sebas011/StockNests/blob/main/docs/implementation-status.md) before production use.
-
-**Source code** archives are for developers; choose **StockNest-Windows-x64.zip** for the ready-to-run application.
+Use the **StockNest-Windows-x64.zip** asset for the working application. GitHub's source code archives are for developers. See the [office workflow guide](https://github.com/sebas011/StockNests/blob/main/docs/office-workflow.md) for daily use.
