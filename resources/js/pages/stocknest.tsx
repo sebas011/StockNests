@@ -143,7 +143,7 @@ type Props = {
         type: string;
     }[];
     notices?: { title: string; description: string; tone?: string }[];
-    flash?: { success?: string; error?: string };
+    flash?: { id?: string | null; success?: string; error?: string };
     demo?: boolean | string;
     isDemo?: boolean;
     demoMode?: boolean;
@@ -568,7 +568,7 @@ export default function StockNest(props: Props) {
             toast.success(props.flash.success, { id: 'stocknest-feedback' });
         if (props.flash?.error)
             toast.error(props.flash.error, { id: 'stocknest-feedback' });
-    }, [props.flash?.success, props.flash?.error]);
+    }, [props.flash?.id, props.flash?.success, props.flash?.error]);
 
     useEffect(() => {
         setQuery(filters.q ?? '');

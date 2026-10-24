@@ -1,6 +1,6 @@
 # Office workflow verification — 2026-10-24
 
-- PostgreSQL 18.6 backend suite: **157 tests, 1,011 assertions passed**, including simultaneous Supply submissions against one allowance, retries, partial receiving, cash separation, amendments, account setup and historical workflow regressions.
+- PostgreSQL 18 backend suite: **158 tests, 1,036 assertions passed** in [GitHub verification](https://github.com/sebas011/StockNests/actions/runs/40045100332), including simultaneous Supply submissions against one allowance, retries, partial receiving, cash separation, amendments, account setup, independent report limits and historical workflow regressions. The earlier local PostgreSQL 18.6 run passed 157 tests and 1,011 assertions before the report-limit regression was added.
 - Frontend suite: **29 tests passed** with Vite Plus 1.4.0 and Vitest 5.0.5. TypeScript, formatting/lint and the production build passed; the resolved npm package audit reported **0 vulnerabilities**.
 - PHPStan level 7 across configured application paths: **0 errors**. PHP formatting and frontend formatting/lint passed.
 - Isolated local browser checks passed for an approved quantity of 10, a Supply submission of 3, receipt of 2, remaining allowance of 7, inventory balance of 2, all three report formats, and preservation through a full server restart. The Windows release workflow repeats these checks against the assembled download before publication.

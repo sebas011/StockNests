@@ -76,7 +76,10 @@ final class WorkspaceController extends Controller
         abort_unless($actor instanceof User, 403);
         $result = $this->workflow->execute($actor, $operation, $request->validated(), (string) $request->input('idempotency_key'));
 
-        return back()->with('success', 'Transaction saved: '.$result['reference']);
+        return back()->with([
+            'success' => 'Transaction saved: '.$result['reference'],
+            'feedback_id' => (string) Str::uuid(),
+        ]);
     }
 
     public function index(Request $request, string $section = 'overview'): Response
