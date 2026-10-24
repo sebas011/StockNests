@@ -226,7 +226,9 @@ async function exerciseSupplyWorkflow(page: Page) {
         .getByRole('button', { name: 'Submit to Supply', exact: true })
         .click();
     await expect(submission).not.toBeVisible({ timeout: 60000 });
-    await dismissSavedNotification(page);
+    await expect(
+        page.getByRole('button', { name: 'Close toast', exact: true }),
+    ).toBeVisible();
 
     await page
         .getByRole('button', { name: 'Record Supply receipt', exact: true })
@@ -250,11 +252,14 @@ async function exerciseSupplyWorkflow(page: Page) {
         .getByRole('button', { name: 'Record Supply receipt', exact: true })
         .click();
     await expect(receipt).not.toBeVisible({ timeout: 60000 });
-    await dismissSavedNotification(page);
+    await expect(
+        page.getByRole('button', { name: 'Close toast', exact: true }),
+    ).toBeVisible();
     await page
         .getByRole('dialog')
         .getByRole('button', { name: 'Close', exact: true })
         .click();
+    await dismissSavedNotification(page);
     await assertAnnualBalances(page);
 }
 
