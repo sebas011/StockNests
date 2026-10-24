@@ -56,7 +56,11 @@ async function assertSavedItem(page: Page) {
     await expect(row).toContainText('Piece');
 }
 
-async function assertExports(page: Page, expectedStock: boolean) {
+async function assertExports(
+    page: Page,
+    expectedStock: boolean,
+    includeDocuments = true,
+) {
     const csv = await page.request.get('/app/reports/stock.csv', {
         timeout: 60000,
     });
@@ -73,6 +77,8 @@ async function assertExports(page: Page, expectedStock: boolean) {
         // A catalog entry alone creates no inventory.
         expect(stockCsv).toBe('"No matching records"');
     }
+
+    if (!includeDocuments) return;
 
     const spreadsheet = await page.request.get('/app/reports/budgets.xlsx', {
         timeout: 60000,
@@ -386,7 +392,9 @@ test.describe('assembled portable Windows package', () => {
         expect(closedSetup.status()).toBe(302);
         expect(closedSetup.headers().location).toMatch(/\/login$/);
         await assertAnnualBalances(page);
-        await assertExports(page, true);
+        // The first phase checks all formats. Keep both phases below the
+        // persistent ten-exports-per-minute limit while checking saved stock.
+        await assertExports(page, true, false);
         expect(browserErrors).toEqual([]);
     });
 });
