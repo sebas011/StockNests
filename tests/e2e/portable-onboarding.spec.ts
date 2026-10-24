@@ -5,6 +5,16 @@ const itemSku = 'PORTABLE-CHECK';
 const itemName = 'Portable verification item';
 const phase = process.env.E2E_PORTABLE_PHASE;
 
+async function dismissSavedNotification(page: Page) {
+    const dismiss = page.getByRole('button', {
+        name: 'Close toast',
+        exact: true,
+    });
+    await expect(dismiss).toBeVisible();
+    await dismiss.click();
+    await expect(dismiss).not.toBeVisible();
+}
+
 async function assertFundingAccess(page: Page) {
     await expect(page).toHaveURL(/\/app\/overview$/);
     const fundingSource = page.getByRole('combobox', {
@@ -156,6 +166,7 @@ async function exerciseSupplyWorkflow(page: Page) {
         })
         .click();
     await expect(plan).not.toBeVisible({ timeout: 60000 });
+    await dismissSavedNotification(page);
     const allowance = page.getByRole('region', {
         name: 'Annual Supply allowance',
     });
@@ -197,6 +208,7 @@ async function exerciseSupplyWorkflow(page: Page) {
         .getByRole('button', { name: 'Create item request', exact: true })
         .click();
     await expect(request).not.toBeVisible({ timeout: 60000 });
+    await dismissSavedNotification(page);
 
     const requestRow = page
         .getByRole('row')
@@ -214,6 +226,7 @@ async function exerciseSupplyWorkflow(page: Page) {
         .getByRole('button', { name: 'Submit to Supply', exact: true })
         .click();
     await expect(submission).not.toBeVisible({ timeout: 60000 });
+    await dismissSavedNotification(page);
 
     await page
         .getByRole('button', { name: 'Record Supply receipt', exact: true })
@@ -237,6 +250,7 @@ async function exerciseSupplyWorkflow(page: Page) {
         .getByRole('button', { name: 'Record Supply receipt', exact: true })
         .click();
     await expect(receipt).not.toBeVisible({ timeout: 60000 });
+    await dismissSavedNotification(page);
     await page
         .getByRole('dialog')
         .getByRole('button', { name: 'Close', exact: true })
@@ -320,6 +334,7 @@ test.describe('assembled portable Windows package', () => {
             .getByRole('button', { name: 'Add catalog item', exact: true })
             .click();
         await expect(dialog).not.toBeVisible();
+        await dismissSavedNotification(page);
         await assertSavedItem(page);
         await assertExports(page, false);
         await exerciseSupplyWorkflow(page);

@@ -564,8 +564,10 @@ export default function StockNest(props: Props) {
     );
 
     useEffect(() => {
-        if (props.flash?.success) toast.success(props.flash.success);
-        if (props.flash?.error) toast.error(props.flash.error);
+        if (props.flash?.success)
+            toast.success(props.flash.success, { id: 'stocknest-feedback' });
+        if (props.flash?.error)
+            toast.error(props.flash.error, { id: 'stocknest-feedback' });
     }, [props.flash?.success, props.flash?.error]);
 
     useEffect(() => {
