@@ -42,7 +42,7 @@ The Approval Center and multi-department approval workflow are removed from the 
 
 For everyday use on one Windows 10/11 x64 PC, the [portable Windows release](docs/operations/portable-windows.md) includes its runtimes and runs offline after download. Each PC has separate local records; copying the application alone does not transfer or synchronize inventory data. The steps below describe the separate Docker option.
 
-Install Docker Desktop with Linux containers and Node 24+. From this directory:
+Install Docker Desktop with Linux containers and Node 24.11 or newer in the Node 24 series. From this directory:
 
 ```powershell
 node scripts/initialize-env.mjs

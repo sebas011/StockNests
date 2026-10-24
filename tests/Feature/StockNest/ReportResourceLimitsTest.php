@@ -42,6 +42,17 @@ function reportRequestFixture($test): void
     ], (string) Str::uuid());
 }
 
+test('workflow actions and exports have independent request limits', function () {
+    for ($attempt = 0; $attempt < 12; $attempt++) {
+        $this->postJson('/app/actions/request.submit', [])->assertUnprocessable();
+    }
+    for ($attempt = 0; $attempt < 10; $attempt++) {
+        $this->get('/app/reports/stock.csv')->assertOk();
+    }
+    $this->get('/app/reports/stock.csv')->assertTooManyRequests();
+    $this->postJson('/app/actions/request.submit', [])->assertUnprocessable();
+});
+
 test('expanded report lines are capped before the PDF renderer or workbook runs', function (string $format) {
     reportRequestFixture($this);
     config(['stocknest.reports.'.$format.'_max_rows' => 2]);

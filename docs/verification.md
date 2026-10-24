@@ -1,9 +1,10 @@
-# Office workflow verification — 2026-10-23
+# Office workflow verification — 2026-10-24
 
 - PostgreSQL 18.6 backend suite: **157 tests, 1,011 assertions passed**, including simultaneous Supply submissions against one allowance, retries, partial receiving, cash separation, amendments, account setup and historical workflow regressions.
-- Frontend suite: **29 tests passed**. TypeScript and the production build passed.
+- Frontend suite: **29 tests passed** with Vite Plus 1.4.0 and Vitest 5.0.5. TypeScript, formatting/lint and the production build passed; the resolved npm package audit reported **0 vulnerabilities**.
 - PHPStan level 7 across configured application paths: **0 errors**. PHP formatting and frontend formatting/lint passed.
-- New portable browser checks exercise a real approved quantity of 10, a Supply submission of 3, receipt of 2, remaining allowance of 7, and preservation through stop/restart. The Windows release workflow executes these checks against the assembled download before publication.
+- Isolated local browser checks passed for an approved quantity of 10, a Supply submission of 3, receipt of 2, remaining allowance of 7, inventory balance of 2, all three report formats, and preservation through a full server restart. The Windows release workflow repeats these checks against the assembled download before publication.
+- A focused report-limit regression passed **24 assertions**: ordinary data entry and report downloads use independent rate limits, while the export limit remains enforced.
 
 Testing uses disposable databases and packages. The existing user installation and its data are not changed by these tests. Official office form templates are still pending; general report exports are implemented.
 

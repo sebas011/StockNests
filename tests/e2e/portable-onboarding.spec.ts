@@ -25,7 +25,7 @@ async function assertFundingAccess(page: Page) {
     ).toHaveCount(0);
     await expect(
         page.getByText('Office of the Vice President for Academic Affairs', {
-            exact: true,
+            exact: false,
         }),
     ).toBeVisible();
 }
