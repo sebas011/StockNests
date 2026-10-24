@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property numeric-string $total
  * @property numeric-string $committed_amount
  * @property numeric-string $spent_amount
+ * @property string|null $authorization_reference
  */
 #[UsePolicy(StockNestPolicy::class)]
 class PurchaseOrder extends DomainModel
